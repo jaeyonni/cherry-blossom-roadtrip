@@ -1,0 +1,67 @@
+# 🌸 벚꽃 개화 로드트립 (수문학 2026-2학기 팀프로젝트)
+
+기상청 종관기상관측(ASOS) 주요 15개 지점의 실측 기온·강수·기준증발산량 데이터를 기반으로 **적산온도(GDD) 모델**과 **물수지식($P = ET + Q + \Delta S$)**을 결합해 벚꽃 개화 시점을 예측하고, **실제 도로 주행시간(OSRM) 및 철도(KTX) 소요시간**을 반영해 최적 로드트립 일정을 자동 추천하는 GitHub Pages 정적 웹 애플리케이션입니다.
+
+---
+
+## 주요 기능 (심플 반응형 웹서비스 · 무인증 공개 API 전용)
+
+1. **벚꽃 개화 지도 (`🗺️ 벚꽃 개화 지도`)**
+   - Leaflet + Esri World Street Map(보조: OpenStreetMap) 실제 지도 위에 전국 15개 기상청 ASOS 지점의 개화 상태(`예정 · 개화 시작 · 만개 · 종료`)를 직관적인 색상 핀으로 표시합니다.
+   - `3/1 ~ 4/20` 날짜 슬라이더 및 `▶ 매주 북상 보기` 애니메이션, 지역별 예상 개화일·만개일·벚꽃축제 일정을 한눈에 확인할 수 있습니다.
+   - 상단 `↻ 최신 기상 반영` 버튼으로 개인 인증키 없이 브라우저에서 Open-Meteo 공개 API 데이터를 재조회해 예측을 갱신합니다.
+2. **내 로드트립 일정 (`📅 내 로드트립 일정`)**
+   - 출발지, 여행 기간, 교통수단(`자동차` / `대중교통`)만 입력하면 해당 기간에 `개화 시작 ~ 만개`인 지역만 골라 남→북 최적 동선(`DAY 1 ~ DAY N`)과 추천 동선 지도를 자동 생성합니다.
+3. **알림 · 위험 경보 (`🔔 알림 · 위험 경보`)**
+   - Open-Meteo 실측 일강수량(일 30mm / 48시간 40mm 이상) 데이터와 WAMIS 공식 홍수주의보 기준 수위를 바탕으로 실제 강수 집중 지역 경보 및 **안전 지역 우회 일정 재추천** 기능을 제공합니다.
+   - 관심 지역 알림 설정 및 현장 개화 제보(`localStorage`)를 통해 예측 보정과 신뢰도 반영을 체험할 수 있습니다.
+
+---
+
+## 검증된 데이터 출처
+
+- **기상·수문 시계열**: [Open-Meteo Historical Weather Archive API](https://open-meteo.com/) (ASOS 15개 지점 일 최고·최저·평균기온, 강수량, FAO 기준증발산량 $ET_0$, 1973~2026 서울 장기 시계열)
+- **벚꽃 개화 관측자료**: 기상청 생물계절관측 서울 표준목(108) 2014~2026 공식 개화·만개일 및 1991~2020 평년 개화일
+- **도로 경로·거리**: [OSRM (Open Source Routing Machine)](https://project-osrm.org/) 실제 도로망 15×15 소요시간/거리 행렬 및 GeoJSON 경로 + 코레일 KTX 공시 소요시간
+- **하천 수위 기준**: 국가수자원관리종합정보시스템(WAMIS) 및 각 홍수통제소 홍수주의보 고시 수위
+- **학술 문헌**: Shi et al. (2014) *Ecology and Evolution* 4(3), Viessman & Lewis (1996) *Introduction to Hydrology* 4th ed.
+
+---
+
+## 폴더 구조
+
+```text
+.
+├── index.html                           # 메인 웹 애플리케이션
+├── css/styles.css                       # 디자인 시스템 및 반응형 스타일
+├── js/
+│   ├── hydrology.js                     # GDD + 물수지 ΔS 계산 및 로드트립 최적화 엔진
+│   └── app.js                           # Leaflet 지도·Canvas 차트·UI 컨트롤러
+├── data/
+│   ├── verified_data.js                 # 웹앱용 검증 데이터 번들
+│   ├── verified_data.json               # 원본 JSON 데이터
+│   ├── 2016-2026_서울_개화일.csv         # 서울(108) 공식 개화·기상 CSV
+│   └── 전국_ASOS_기온자료.csv            # 전국 15개 지점 일별 기온·수문 CSV
+├── scripts/
+│   └── build_verified_data.py           # 실측 API 데이터 수집·캘리브레이션·CSV 생성 스크립트
+├── .github/workflows/daily-pipeline.yml # 매일 KST 06:00 자동 데이터 갱신 워크플로우
+└── .nojekyll                            # GitHub Pages 정적 서빙 설정
+```
+
+---
+
+## 데이터 갱신 및 GitHub Pages 배포 방법
+
+### 1. 로컬 데이터 재수집 및 테스트
+```bash
+python scripts/build_verified_data.py
+python -m http.server 8080
+```
+브라우저에서 `http://localhost:8080` 에 접속해 확인합니다.
+
+### 2. GitHub 저장소 업로드 및 Pages 활성화
+1. GitHub에서 새 저장소(예: `cherry-blossom-hydrology`)를 생성합니다.
+2. 이 폴더의 모든 파일을 저장소의 `main` 브랜치 루트에 업로드(`git push` 또는 웹 업로드)합니다.
+3. GitHub 저장소의 **Settings → Pages → Build and deployment** 에서 **Source: `Deploy from a branch`**, **Branch: `main` / `/ (root)`** 를 선택해 저장합니다.
+4. 잠시 후 발급되는 `https://<username>.github.io/<repo>/` URL로 바로 접속할 수 있습니다.
+5. (선택) **Actions** 탭에서 `Daily Hydrological GDD Pipeline` 워크플로우를 활성화하면 매일 오전 6시(KST) 기상 데이터가 자동으로 갱신됩니다.

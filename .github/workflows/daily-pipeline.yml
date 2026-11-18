@@ -1,0 +1,37 @@
+name: Daily Hydrological GDD Pipeline
+
+on:
+  schedule:
+    # 매일 한국시간(KST) 오전 06:00 자동 기상 수집 및 GDD 재계산 (UTC 21:00)
+    - cron: "0 21 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  update-weather-gdd:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.13
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Run ASOS/Open-Meteo GDD & OSRM pipeline
+        run: python scripts/build_verified_data.py
+
+      - name: Commit and push updated data
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add data/verified_data.js data/verified_data.json data/2016-2026_서울_개화일.csv data/전국_ASOS_기온자료.csv
+          if git diff --staged --quiet; then
+            echo "No changes to commit."
+          else
+            git commit -m "chore(pipeline): daily ASOS weather & GDD prediction refresh"
+            git push
+          fi

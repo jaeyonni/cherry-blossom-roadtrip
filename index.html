@@ -1,0 +1,357 @@
+<!DOCTYPE html>
+<html lang="ko">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>벚꽃 개화 로드트립 | 개화 예측 · 일정 자동 추천</title>
+    <meta
+      name="description"
+      content="기온·강수 데이터로 벚꽃 개화를 예측하고, 로드트립 일정을 자동으로 추천하는 웹서비스"
+    />
+    <link
+      rel="stylesheet"
+      href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/static/pretendard.min.css"
+    />
+    <link
+      rel="stylesheet"
+      href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+      crossorigin=""
+    />
+    <link rel="stylesheet" href="css/styles.css" />
+  </head>
+  <body>
+    <header class="site-header">
+      <div class="header-inner">
+        <div class="brand-group">
+          <div class="brand-mark" aria-hidden="true">🌸</div>
+          <div>
+            <h1 class="brand-title">벚꽃 개화 로드트립</h1>
+            <p class="brand-subtitle">기온·강수 데이터로 개화를 예측하고 로드트립 일정을 자동으로 추천합니다</p>
+          </div>
+        </div>
+
+        <nav class="web-nav" aria-label="핵심 메뉴">
+          <button type="button" class="web-nav-btn active" data-view="map">🗺️ 벚꽃 개화 지도</button>
+          <button type="button" class="web-nav-btn" data-view="trip">📅 내 로드트립 일정</button>
+          <button type="button" class="web-nav-btn" data-view="alert">
+            🔔 알림 · 위험 경보<span class="nav-alert-dot" id="alertNavDot"></span>
+          </button>
+        </nav>
+
+        <button
+          type="button"
+          class="sync-btn"
+          id="btnLiveSync"
+          title="공개 기상 API에서 최신 기온·강수 데이터를 다시 불러와 예측을 갱신합니다"
+        >
+          ↻ 최신 기상 반영
+        </button>
+      </div>
+    </header>
+
+    <main class="main-shell">
+      <!-- ==================== VIEW 1: 벚꽃 개화 지도 (PDF 8p, 9p, 10p) ==================== -->
+      <section id="view-map" class="web-view active">
+        <div class="grid-map">
+          <div class="card">
+            <div style="display:flex; justify-content:space-between; align-items:flex-start; gap:10px; flex-wrap:wrap;">
+              <div>
+                <h2 class="card-title">벚꽃 개화 지도</h2>
+                <p class="card-sub"><span id="mapSubOrigin">서울 출발</span> · <span id="mapSubDate">2026년 3월 29일</span> 기준</p>
+              </div>
+              <button type="button" class="btn-outline" id="btnAnimateNorth">▶ 매주 북상 보기</button>
+            </div>
+
+            <div class="map-search-bar">
+              <input
+                type="text"
+                id="stationSearchInput"
+                class="search-input"
+                placeholder="🔍 지역 검색 또는 축제명 입력 (예: 진해, 경주, 여의도)"
+              />
+              <input
+                type="date"
+                id="datePickerInput"
+                class="date-chip"
+                value="2026-03-29"
+                min="2026-03-01"
+                max="2026-04-20"
+              />
+            </div>
+
+            <div class="date-slider-box">
+              <div class="slider-top-row">
+                <span>개화 전선 날짜 이동</span>
+                <div style="display:flex; align-items:center; gap:8px;">
+                  <strong id="sliderDateLabel" style="color:var(--pink-full);">2026-03-29 (일)</strong>
+                  <button type="button" class="btn-outline" id="btnFitKorea" style="padding:4px 9px; font-size:0.74rem;">전국 보기</button>
+                </div>
+              </div>
+              <input type="range" id="dateSlider" min="0" max="50" value="28" aria-label="개화 전선 날짜 슬라이더" />
+              <div class="slider-ticks">
+                <span>3/1</span>
+                <span>3/15</span>
+                <span>3/29</span>
+                <span>4/5</span>
+                <span>4/20</span>
+              </div>
+            </div>
+
+            <div class="map-canvas-box">
+              <div id="mainMap"></div>
+            </div>
+
+            <div class="recommend-bar" id="recommendBar" role="button" tabindex="0">
+              <div style="display:flex; align-items:center; gap:12px;">
+                <span class="dday-pill" id="recommendDday">추천</span>
+                <div>
+                  <div id="recommendTitle" style="font-size:0.95rem; font-weight:800; color:var(--green-deep);">
+                    이번 기준일 추천 · 계산 중...
+                  </div>
+                  <div id="recommendSub" style="font-size:0.79rem; color:var(--text-muted);">
+                    개화 예측 및 이동시간 확인 중...
+                  </div>
+                </div>
+              </div>
+              <span style="font-size:1.1rem; font-weight:800; color:var(--pink-full);">→</span>
+            </div>
+          </div>
+
+          <div class="side-stack">
+            <!-- PDF 9p: 지도 위 단계 표시 카드 -->
+            <div class="card">
+              <h3 class="card-title" style="font-size:1.02rem; margin-bottom:6px;">지도 위 단계 표시</h3>
+              <p class="card-sub" style="margin-bottom:10px;">선택한 날짜 기준 전국 주요 지역 상태입니다</p>
+
+              <div class="stage-guide-row">
+                <span class="dot-swatch" style="background:#C4C0B8;"></span>
+                <strong style="font-size:0.86rem;">예정</strong>
+                <div>
+                  <div style="font-size:0.8rem; font-weight:600;">아직 개화 전</div>
+                  <div class="city-mini-tags" id="stageList-scheduled">-</div>
+                </div>
+              </div>
+
+              <div class="stage-guide-row">
+                <span class="dot-swatch" style="background:#F2B8C6;"></span>
+                <strong style="font-size:0.86rem; color:#8E2F4D;">개화 시작</strong>
+                <div>
+                  <div style="font-size:0.8rem; font-weight:600;">예측 개화일 도달</div>
+                  <div class="city-mini-tags" id="stageList-opening">-</div>
+                </div>
+              </div>
+
+              <div class="stage-guide-row">
+                <span class="dot-swatch" style="background:#B85D79;"></span>
+                <strong style="font-size:0.86rem; color:#B85D79;">만개</strong>
+                <div>
+                  <div style="font-size:0.8rem; font-weight:600;">방문 최적기</div>
+                  <div class="city-mini-tags" id="stageList-full">-</div>
+                </div>
+              </div>
+
+              <div class="stage-guide-row">
+                <span class="dot-swatch" style="background:#6E6A66;"></span>
+                <strong style="font-size:0.86rem;">종료</strong>
+                <div>
+                  <div style="font-size:0.8rem; font-weight:600;">낙화 · 다음 지역으로 이동 시점</div>
+                  <div class="city-mini-tags" id="stageList-ended">-</div>
+                </div>
+              </div>
+            </div>
+
+            <!-- 선택한 지역 상세 & 축제 카드 -->
+            <div class="card">
+              <div style="display:flex; justify-content:space-between; align-items:flex-start; gap:10px;">
+                <div>
+                  <h3 class="card-title" id="selectedCityName">진해(창원)</h3>
+                  <p class="card-sub" id="selectedCitySpot">여좌천 로망스다리·경화역</p>
+                </div>
+                <span class="stage-pill" id="selectedCityStage">개화 시작</span>
+              </div>
+
+              <div class="info-box-row">
+                <div class="info-box">
+                  <div class="label">예상 개화일</div>
+                  <div class="val" id="selectedCityOpenDate">-</div>
+                </div>
+                <div class="info-box">
+                  <div class="label">만개 절정기</div>
+                  <div class="val" id="selectedCityPeakDate">-</div>
+                </div>
+              </div>
+
+              <div style="font-size:0.82rem; color:var(--text-muted); margin-bottom:10px;" id="selectedCityVsNormal">
+                평년 대비 계산 중...
+              </div>
+
+              <div
+                id="selectedCityFestival"
+                style="padding:11px 13px; border-radius:12px; background:var(--pink-tint); color:var(--green-deep); font-size:0.82rem; margin-bottom:14px;"
+              ></div>
+
+              <div style="display:flex; gap:8px;">
+                <button type="button" class="btn-outline" id="btnWatchToggle" style="flex:1;">🔔 관심 지역 등록</button>
+                <button type="button" class="btn-pink" id="btnGoTripWithCity" style="flex:1;">이 지역으로 일정 짜기 →</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ==================== VIEW 2: 내 로드트립 일정 (PDF 8p, 12p, 13p) ==================== -->
+      <section id="view-trip" class="web-view">
+        <div class="grid-trip">
+          <div class="side-stack">
+            <div class="card">
+              <h2 class="card-title">로드트립 경로 자동 추천</h2>
+              <p class="card-sub" style="margin-bottom:14px;">날짜만 입력하면 개화 중인 지역을 골라 남→북 동선을 짜드립니다</p>
+
+              <div class="form-grid-2">
+                <div class="field-group">
+                  <label for="tripOrigin">출발지</label>
+                  <select id="tripOrigin" class="field-ctrl"></select>
+                </div>
+                <div class="field-group">
+                  <label for="tripTransport">교통수단</label>
+                  <select id="tripTransport" class="field-ctrl">
+                    <option value="car">자동차</option>
+                    <option value="transit">대중교통 (KTX·버스)</option>
+                  </select>
+                </div>
+              </div>
+
+              <div class="form-grid-2">
+                <div class="field-group">
+                  <label for="tripStartDate">출발 날짜</label>
+                  <input type="date" id="tripStartDate" class="field-ctrl" value="2026-04-03" min="2026-03-15" max="2026-04-18" />
+                </div>
+                <div class="field-group">
+                  <label for="tripEndDate">도착 날짜</label>
+                  <input type="date" id="tripEndDate" class="field-ctrl" value="2026-04-05" min="2026-03-15" max="2026-04-20" />
+                </div>
+              </div>
+
+              <div style="display:flex; gap:14px; margin: 4px 0 12px; font-size:0.79rem; color:var(--text-muted);">
+                <label style="display:flex; align-items:center; gap:5px; cursor:pointer;">
+                  <input type="checkbox" id="tripExcludeHazard" checked />
+                  호우특보 지역 피하기
+                </label>
+                <label style="display:flex; align-items:center; gap:5px; cursor:pointer;">
+                  <input type="checkbox" id="tripIncludeJeju" />
+                  제주 포함
+                </label>
+              </div>
+
+              <button type="button" class="btn-primary" id="btnBuildTrip">내 로드트립 일정 추천받기</button>
+            </div>
+
+            <div class="card">
+              <h3 class="card-title">내 로드트립 일정</h3>
+              <p class="card-sub" id="tripHeaderSummary">4/3(금) ~ 4/5(일) · 2박 3일</p>
+
+              <div id="tripItineraryList" class="timeline-list"></div>
+
+              <p style="margin:14px 0 0; font-size:0.77rem; color:var(--text-muted);">
+                * 입력한 기간에 '개화 시작 ~ 만개'로 예측되는 지역만 자동으로 추려 이동시간까지 고려한 최적 순서로 배열했습니다.
+              </p>
+            </div>
+          </div>
+
+          <div class="card">
+            <div style="margin-bottom:12px;">
+              <h3 class="card-title">추천 동선 지도</h3>
+              <p class="card-sub" id="tripMapSubtitle">일자별 방문 순서와 실제 도로 이동 경로를 표시합니다</p>
+            </div>
+            <div class="map-canvas-box" style="height:540px;">
+              <div id="tripMap"></div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ==================== VIEW 3: 알림 · 위험 경보 (PDF 8p, 11p, 13p) ==================== -->
+      <section id="view-alert" class="web-view">
+        <div class="grid-alert">
+          <div class="card">
+            <div style="display:flex; justify-content:space-between; align-items:flex-start; gap:10px; flex-wrap:wrap;">
+              <div>
+                <h2 class="card-title">알림 · 호우 위험 경보</h2>
+                <p class="card-sub">실측 강수량(일 30mm / 48h 40mm 이상) 감지 시 여행 전 미리 알려드리고 우회 일정을 제안합니다</p>
+              </div>
+              <div style="display:flex; align-items:center; gap:6px;">
+                <label for="alertDatePicker" style="font-size:0.76rem; font-weight:700; color:var(--text-muted);">조회 날짜</label>
+                <input
+                  type="date"
+                  id="alertDatePicker"
+                  class="date-chip"
+                  value="2026-03-29"
+                  min="2026-03-01"
+                  max="2026-04-20"
+                />
+              </div>
+            </div>
+
+            <div id="hazardAlertBox" class="hazard-box safe"></div>
+
+            <h3 style="margin:18px 0 10px; font-size:0.9rem; color:var(--text-muted);">최근 알림</h3>
+            <div id="alertFeedList"></div>
+          </div>
+
+          <div class="side-stack">
+            <div class="card">
+              <h3 class="card-title">관심 지역 알림 받기</h3>
+              <p class="card-sub">선택한 지역이 '개화 시작' 단계가 되면 위 알림에 바로 표시됩니다</p>
+              <div class="watch-chip-wrap" id="watchChipContainer"></div>
+            </div>
+
+            <div class="card">
+              <h3 class="card-title">📸 실제 개화 제보하기</h3>
+              <p class="card-sub" style="margin-bottom:12px;">직접 보신 개화 상태를 공유하면 예측 보정과 신뢰도 점수에 반영됩니다</p>
+
+              <form id="reportForm">
+                <div class="form-grid-2">
+                  <div class="field-group">
+                    <label for="reportStation">지역</label>
+                    <select id="reportStation" class="field-ctrl"></select>
+                  </div>
+                  <div class="field-group">
+                    <label for="reportDate">촬영 날짜</label>
+                    <input type="date" id="reportDate" class="field-ctrl" value="2026-03-29" min="2026-03-01" max="2026-04-20" />
+                  </div>
+                </div>
+
+                <div class="form-grid-2">
+                  <div class="field-group">
+                    <label for="reportStageSelect">목격한 상태</label>
+                    <select id="reportStageSelect" class="field-ctrl">
+                      <option value="10">아직 안 핌 (꽃봉오리)</option>
+                      <option value="30" selected>개화 시작 (약 20~30%)</option>
+                      <option value="85">만개 (절정)</option>
+                      <option value="5">낙화 진행 중</option>
+                    </select>
+                  </div>
+                  <div class="field-group">
+                    <label for="reportPhoto">현장 사진 (선택)</label>
+                    <input type="file" id="reportPhoto" accept="image/*" style="font-size:0.76rem; padding-top:6px;" />
+                  </div>
+                </div>
+
+                <button type="submit" class="btn-primary">제보 등록하기</button>
+              </form>
+
+              <div id="userReportsList" style="margin-top:14px;"></div>
+            </div>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <div id="toast" class="toast" role="status" aria-live="polite"></div>
+
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" crossorigin=""></script>
+    <script src="data/verified_data.js"></script>
+    <script src="js/hydrology.js"></script>
+    <script src="js/app.js"></script>
+  </body>
+</html>
