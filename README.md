@@ -47,21 +47,3 @@
 ├── .github/workflows/daily-pipeline.yml # 매일 KST 06:00 자동 데이터 갱신 워크플로우
 └── .nojekyll                            # GitHub Pages 정적 서빙 설정
 ```
-
----
-
-## 데이터 갱신 및 GitHub Pages 배포 방법
-
-### 1. 로컬 데이터 재수집 및 테스트
-```bash
-python scripts/build_verified_data.py
-python -m http.server 8080
-```
-브라우저에서 `http://localhost:8080` 에 접속해 확인합니다.
-
-### 2. GitHub 저장소 업로드 및 Pages 활성화
-1. GitHub에서 새 저장소(예: `cherry-blossom-hydrology`)를 생성합니다.
-2. 이 폴더의 모든 파일을 저장소의 `main` 브랜치 루트에 업로드(`git push` 또는 웹 업로드)합니다.
-3. GitHub 저장소의 **Settings → Pages → Build and deployment** 에서 **Source: `Deploy from a branch`**, **Branch: `main` / `/ (root)`** 를 선택해 저장합니다.
-4. 잠시 후 발급되는 `https://<username>.github.io/<repo>/` URL로 바로 접속할 수 있습니다.
-5. (선택) **Actions** 탭에서 `Daily Hydrological GDD Pipeline` 워크플로우를 활성화하면 매일 오전 6시(KST) 기상 데이터가 자동으로 갱신됩니다.
