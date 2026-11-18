@@ -30,6 +30,8 @@ html,
 body {
   margin: 0;
   padding: 0;
+  max-width: 100%;
+  overflow-x: hidden;
   background-color: var(--bg-ivory);
   color: var(--text-main);
   font-family: "Pretendard", "Apple SD Gothic Neo", "Noto Sans KR", -apple-system, BlinkMacSystemFont, sans-serif;
@@ -305,6 +307,10 @@ select {
   color: var(--text-muted);
   cursor: pointer;
   transition: all 0.15s;
+  -webkit-appearance: none;
+  appearance: none;
+  max-width: 100%;
+  min-width: 0;
 }
 
 .date-chip.active {
@@ -471,6 +477,7 @@ select {
   display: flex;
   flex-direction: column;
   gap: 4px;
+  min-width: 0;
 }
 
 .field-group label {
@@ -481,12 +488,26 @@ select {
 
 .field-ctrl {
   width: 100%;
+  max-width: 100%;
+  min-width: 0;
+  display: block;
   padding: 9px 11px;
   border-radius: 10px;
   border: 1px solid var(--border-soft);
   background: var(--bg-ivory);
   font-size: 0.84rem;
   color: var(--text-main);
+  -webkit-appearance: none;
+  appearance: none;
+}
+
+input[type="date"].field-ctrl {
+  min-inline-size: 0;
+  height: 40px;
+}
+
+input[type="date"]::-webkit-date-and-time-value {
+  text-align: left;
 }
 
 .timeline-list {
@@ -537,9 +558,13 @@ select {
   color: #70233c;
 }
 
+.trip-map-box {
+  height: 540px;
+}
+
 #tripMap {
   width: 100%;
-  height: 540px;
+  height: 100%;
 }
 
 /* ================= VIEW 3: ALERTS & REPORT (PDF 8p center, 11p, 13p) ================= */
@@ -691,41 +716,101 @@ select {
   .grid-map,
   .grid-trip,
   .grid-alert {
-    grid-template-columns: 1fr;
+    grid-template-columns: minmax(0, 1fr);
   }
 
-  .map-canvas-box {
-    height: 390px;
+  .grid-map > *,
+  .grid-trip > *,
+  .grid-alert > *,
+  .side-stack,
+  .card {
+    min-width: 0;
+    max-width: 100%;
   }
 
-  #tripMap {
-    height: 390px;
+  .map-canvas-box,
+  .trip-map-box {
+    height: 380px;
   }
 }
 
 @media (max-width: 640px) {
   .main-shell {
-    padding: 14px;
+    padding: 12px 12px 32px;
+    max-width: 100%;
   }
 
   .header-inner {
-    padding: 10px 14px;
+    padding: 9px 12px;
+    gap: 8px;
+  }
+
+  .brand-mark {
+    width: 32px;
+    height: 32px;
+    font-size: 16px;
+    border-radius: 9px;
+  }
+
+  .brand-title {
+    font-size: 0.96rem;
+  }
+
+  .brand-subtitle {
+    display: none;
+  }
+
+  .sync-btn {
+    order: 2;
+    padding: 6px 10px;
+    font-size: 0.72rem;
   }
 
   .web-nav {
+    order: 3;
     width: 100%;
+    max-width: 100%;
     justify-content: space-between;
   }
 
   .web-nav-btn {
-    padding: 7px 10px;
-    font-size: 0.78rem;
+    padding: 7px 4px;
+    font-size: 0.71rem;
+    line-height: 1.25;
     flex: 1;
+    min-width: 0;
     text-align: center;
+    white-space: normal;
+    word-break: keep-all;
+  }
+
+  .card {
+    padding: 15px;
+    border-radius: 18px;
+  }
+
+  .search-input {
+    min-width: 0;
+    flex: 1 1 100%;
+  }
+
+  .map-search-bar .date-chip {
+    width: 100%;
+    text-align: left;
+  }
+
+  .slider-top-row {
+    flex-wrap: wrap;
+    gap: 6px;
+  }
+
+  .map-canvas-box,
+  .trip-map-box {
+    height: 330px;
   }
 
   .form-grid-2,
   .info-box-row {
-    grid-template-columns: 1fr;
+    grid-template-columns: minmax(0, 1fr);
   }
 }
