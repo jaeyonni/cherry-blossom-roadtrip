@@ -537,6 +537,31 @@ select {
   margin-top: 2px;
 }
 
+.info-box-row-3 {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.info-box-row-3 .info-box {
+  padding: 10px 9px;
+}
+
+.info-box-row-3 .val {
+  font-size: 0.93rem;
+  white-space: nowrap;
+}
+
+.rain-shorten-note {
+  padding: 9px 11px;
+  border-radius: 11px;
+  background: #edf4f8;
+  border: 1px solid #c8dce8;
+  color: #21495e;
+  font-size: 0.77rem;
+  line-height: 1.48;
+  margin-bottom: 10px;
+}
+
 /* ================= VIEW 2: ROADTRIP (PDF 8p right, 12p) ================= */
 .grid-trip {
   display: grid;
@@ -1031,5 +1056,22 @@ input[type="date"]::-webkit-date-and-time-value {
   .form-grid-2,
   .info-box-row {
     grid-template-columns: minmax(0, 1fr);
+  }
+
+  .info-box-row-3 {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 6px;
+  }
+
+  .info-box-row-3 .info-box {
+    padding: 9px 7px;
+  }
+
+  .info-box-row-3 .label {
+    font-size: 0.69rem;
+  }
+
+  .info-box-row-3 .val {
+    font-size: 0.85rem;
   }
 }

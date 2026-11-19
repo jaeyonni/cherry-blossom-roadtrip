@@ -496,6 +496,23 @@
 
     document.getElementById("selectedCityOpenDate").textContent = formatMonthDayKorean(ev.predictedOpenDate);
     document.getElementById("selectedCityPeakDate").textContent = `${formatMonthDayKorean(ev.predictedFullDate)}경`;
+    const endDateEl = document.getElementById("selectedCityEndDate");
+    if (endDateEl) {
+      endDateEl.textContent = `${formatMonthDayKorean(ev.predictedEndDate)}경`;
+    }
+
+    const rainNoteEl = document.getElementById("selectedCityRainNote");
+    if (rainNoteEl) {
+      if (ev.rainShortenedDays > 0 && ev.petalFallRainEvents?.length) {
+        const peakRain = [...ev.petalFallRainEvents].sort((a, b) => b.precip - a.precip)[0];
+        const srcLabel = state.activeYear >= 2027 ? "예보·실측 강수" : "실측 강수";
+        rainNoteEl.style.display = "block";
+        rainNoteEl.innerHTML = `🌧️ <strong>${srcLabel}(${H.formatShortMonthDay(peakRain.date)} ${peakRain.precip.toFixed(1)}mm)</strong> 반영 · 낙화 <strong>${ev.rainShortenedDays}일</strong> 앞당겨짐 <span style="opacity:0.82;">(무강수 기준 ${formatMonthDayKorean(ev.predictedEndDateNoRain)} → ${formatMonthDayKorean(ev.predictedEndDate)})</span>`;
+      } else {
+        rainNoteEl.style.display = "none";
+        rainNoteEl.innerHTML = "";
+      }
+    }
 
     const vsNormStr =
       ev.daysVsNormal === 0

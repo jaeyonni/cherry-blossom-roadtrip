@@ -17,6 +17,19 @@
   const DEFAULT_BASELINE_DELTA_S = -40.0; // 전국 내륙 봄철(2~3월) 평균 누적 물수지 저류변화 기준(mm)
   const WATER_BALANCE_COUPLING_K = 0.22; // ΔS 1mm 변화당 유효 GDD 임계값 보정 계수 (°C·day / mm)
 
+  const FULL_BLOOM_GDD_TARGET = 38.0; // 개화 -> 만개 추가 적산온도 임계값 (°C·day, T_base = 1.2°C)
+  const FULL_BLOOM_MIN_DAYS = 3;
+  const FULL_BLOOM_MAX_DAYS = 7;
+
+  const PETAL_FALL_GDD_TARGET = 72.0; // 만개 -> 낙화(종료) 열적 노화 및 강우 가속 임계값 (°C·day)
+  const PETAL_FALL_MIN_CLEAR_DAYS = 5;
+  const PETAL_FALL_MIN_RAIN_DAYS = 2;
+  const PETAL_FALL_MAX_DAYS = 8;
+  const PETAL_FALL_RAIN_TRIGGER_MM = 15.0;
+  const PETAL_FALL_RAIN_BASE_MM = 10.0;
+  const PETAL_FALL_RAIN_COEFF = 1.15;
+  const PETAL_FALL_SAME_DAY_WEIGHT = 0.6;
+
   // 제주 ↔ 육지 국내선 항공 + 공항 접근 소요시간 (순수 비행시간 + 공항/시내 이동시간 기준)
   const JEJU_CITY_ACCESS_MIN = 10; // 제주국제공항 ↔ 제주시내
   const SEOGWIPO_ACCESS_MIN = 50; // 제주국제공항 ↔ 서귀포 시내
@@ -188,6 +201,104 @@
     return `${h}시간 ${m}분`;
   }
 
+  function getTailAvgDailyGdd(series, floorVal) {
+    const tail = series.slice(-5);
+    if (!tail.length) return floorVal;
+    const avg = tail.reduce((acc, row) => acc + (row.dailyGdd || 0), 0) / tail.length;
+    return Math.max(floorVal, avg);
+  }
+
+  /**
+   * 개화일 이후 일별 적산온도(ΔGDD >= 38.0°C·day)를 누적해 동적 만개일을 계산한다 (3~7일 범위).
+   */
+  function computeDynamicFullBloomDate(series, openDate) {
+    const round2 = (x) => Math.round(x * 100) / 100;
+    let cum = 0;
+    let lastDSince = 0;
+
+    for (const row of series) {
+      if (row.date <= openDate) continue;
+      const dSince = diffDaysIso(openDate, row.date);
+      cum = round2(cum + (row.dailyGdd || 0));
+      lastDSince = dSince;
+
+      if (dSince >= FULL_BLOOM_MIN_DAYS && cum >= FULL_BLOOM_GDD_TARGET - 0.05) {
+        return row.date;
+      }
+      if (dSince >= FULL_BLOOM_MAX_DAYS) {
+        return row.date;
+      }
+    }
+
+    const avgDaily = getTailAvgDailyGdd(series, 6.0);
+    const needed = Math.max(0, FULL_BLOOM_GDD_TARGET - cum);
+    const extraDays = Math.ceil(needed / avgDaily);
+    const totalDays = Math.max(
+      FULL_BLOOM_MIN_DAYS,
+      Math.min(FULL_BLOOM_MAX_DAYS, lastDSince + extraDays)
+    );
+    return addDaysIso(openDate, totalDays);
+  }
+
+  /**
+   * 만개일 이후 열적 노화 GDD와 실측·16일 예보 강수(>= 15mm)에 의한 물리적 낙화 가속을 계산한다.
+   * - climatology(2027년 기후평균 기간)에서는 가짜 강수 단축이 발동하지 않는다.
+   */
+  function computeDynamicPetalFall(series, fullDate, enableRainAccel = true) {
+    const round2 = (x) => Math.round(x * 100) / 100;
+
+    const runPass = (useRain) => {
+      let cumThermal = 0;
+      let cumRainEq = 0;
+      let lastDSince = 0;
+      const rainEvents = [];
+
+      for (const row of series) {
+        if (row.date < fullDate) continue;
+        const dSince = diffDaysIso(fullDate, row.date);
+        const isLive = row.dataType === "observed" || row.dataType === "forecast16d";
+        let rainEq = 0;
+
+        if (useRain && isLive && row.precip >= PETAL_FALL_RAIN_TRIGGER_MM) {
+          rainEq = round2((row.precip - PETAL_FALL_RAIN_BASE_MM) * PETAL_FALL_RAIN_COEFF);
+          rainEvents.push({ date: row.date, precip: row.precip });
+        }
+
+        if (dSince === 0) {
+          cumRainEq = round2(cumRainEq + rainEq * PETAL_FALL_SAME_DAY_WEIGHT);
+        } else {
+          cumThermal = round2(cumThermal + (row.dailyGdd || 0));
+          cumRainEq = round2(cumRainEq + rainEq);
+        }
+        lastDSince = dSince;
+
+        const minReq = cumRainEq > 0 ? PETAL_FALL_MIN_RAIN_DAYS : PETAL_FALL_MIN_CLEAR_DAYS;
+        if (dSince >= minReq && cumThermal + cumRainEq >= PETAL_FALL_GDD_TARGET - 0.05) {
+          return { endDate: row.date, rainEvents };
+        }
+        if (dSince >= PETAL_FALL_MAX_DAYS) {
+          return { endDate: row.date, rainEvents };
+        }
+      }
+
+      const avgDaily = getTailAvgDailyGdd(series, 8.0);
+      const minReq = cumRainEq > 0 ? PETAL_FALL_MIN_RAIN_DAYS : PETAL_FALL_MIN_CLEAR_DAYS;
+      const needed = Math.max(0, PETAL_FALL_GDD_TARGET - (cumThermal + cumRainEq));
+      const extraDays = Math.ceil(needed / avgDaily);
+      const totalDays = Math.max(minReq, Math.min(PETAL_FALL_MAX_DAYS, lastDSince + extraDays));
+      return { endDate: addDaysIso(fullDate, totalDays), rainEvents };
+    };
+
+    const noRain = runPass(false);
+    const withRain = enableRainAccel ? runPass(true) : noRain;
+    return {
+      endDate: withRain.endDate,
+      endDateNoRain: noRain.endDate,
+      rainShortenedDays: Math.max(0, diffDaysIso(withRain.endDate, noRain.endDate)),
+      rainEvents: withRain.rainEvents,
+    };
+  }
+
   /**
    * 단일 관측지점에 대해 모델 파라미터(year, tBase, tempShift, precipScalePct, waterBalanceEnabled, reportOffsetDays)를 적용해
    * 해당 연도 2/1 ~ 4/25 전체 일별 GDD, 물수지, 예측 개화일/만개일/종료일을 재계산한다.
@@ -200,8 +311,8 @@
     const waterBalanceEnabled = options.waterBalanceEnabled ?? true;
     const useLiteratureThreshold = options.useLiteratureThreshold ?? false;
     const reportOffsetDays = options.reportOffsetDays ?? 0;
-    const fullBloomOffsetDays = options.fullBloomOffsetDays ?? 6;
-    const endOffsetDays = options.endOffsetDays ?? 13;
+    const dynamicPhenologyEnabled = options.useDynamicPhenology ?? true;
+    const rainPetalFallEnabled = options.rainPetalFallEnabled ?? true;
 
     // 순수 열적 기준 임계값 역산:
     // 2026년은 2026 단일 캘리브레이션, 2027년+는 2023~2026 4개년 다년 보정 열적 임계값 적용
@@ -285,10 +396,39 @@
       predictedOpenDate = `${year}-04-22`;
     }
 
-    // 사용자 커뮤니티 현장 제보 보정(reportOffsetDays) 반영
+    // 사용자 커뮤니티 현장 제보 보정(reportOffsetDays) 반영 후 동적 만개·낙화일 산출
     const finalOpenDate = addDaysIso(predictedOpenDate, reportOffsetDays);
-    const finalFullDate = addDaysIso(finalOpenDate, fullBloomOffsetDays);
-    const finalEndDate = addDaysIso(finalOpenDate, endOffsetDays);
+
+    let finalFullDate;
+    if (options.fullBloomOffsetDays != null) {
+      finalFullDate = addDaysIso(finalOpenDate, options.fullBloomOffsetDays);
+    } else if (dynamicPhenologyEnabled) {
+      finalFullDate = computeDynamicFullBloomDate(series, finalOpenDate);
+    } else {
+      finalFullDate = addDaysIso(finalOpenDate, 5);
+    }
+
+    let petalFallResult;
+    if (options.endOffsetDays != null) {
+      const explicitEnd = addDaysIso(finalOpenDate, options.endOffsetDays);
+      petalFallResult = {
+        endDate: explicitEnd,
+        endDateNoRain: explicitEnd,
+        rainShortenedDays: 0,
+        rainEvents: [],
+      };
+    } else if (dynamicPhenologyEnabled) {
+      petalFallResult = computeDynamicPetalFall(series, finalFullDate, rainPetalFallEnabled);
+    } else {
+      const fallbackEnd = addDaysIso(finalFullDate, 7);
+      petalFallResult = {
+        endDate: fallbackEnd,
+        endDateNoRain: fallbackEnd,
+        rainShortenedDays: 0,
+        rainEvents: [],
+      };
+    }
+    const finalEndDate = petalFallResult.endDate;
 
     return {
       year,
@@ -299,6 +439,11 @@
       predictedOpenDate: finalOpenDate,
       predictedFullDate: finalFullDate,
       predictedEndDate: finalEndDate,
+      predictedEndDateNoRain: petalFallResult.endDateNoRain,
+      fullBloomDays: diffDaysIso(finalOpenDate, finalFullDate),
+      bloomDurationDays: diffDaysIso(finalOpenDate, finalEndDate),
+      rainShortenedDays: petalFallResult.rainShortenedDays,
+      petalFallRainEvents: petalFallResult.rainEvents,
       normalBloomDate: `${year}-${station.normalBloom}`,
       obsBloom2026Date: `2026-${station.obsBloom2026}`,
       daysVsNormal: diffDaysIso(`${year}-${station.normalBloom}`, finalOpenDate),
@@ -941,6 +1086,9 @@
     STAGE_META,
     DEFAULT_BASELINE_DELTA_S,
     WATER_BALANCE_COUPLING_K,
+    FULL_BLOOM_GDD_TARGET,
+    PETAL_FALL_GDD_TARGET,
+    PETAL_FALL_RAIN_TRIGGER_MM,
     addDaysIso,
     diffDaysIso,
     formatKoreanDate,
