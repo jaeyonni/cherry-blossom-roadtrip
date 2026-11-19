@@ -213,10 +213,12 @@
                   <select id="tripOrigin" class="field-ctrl"></select>
                 </div>
                 <div class="field-group">
-                  <label for="tripTransport">교통수단</label>
+                  <label for="tripTransport">기본 교통수단</label>
                   <select id="tripTransport" class="field-ctrl">
-                    <option value="car">자동차</option>
-                    <option value="transit">대중교통 (KTX·버스)</option>
+                    <option value="car">🚗 자동차 (제주 항공전환)</option>
+                    <option value="bus">🚌 고속·시외버스</option>
+                    <option value="rail">🚄 기차 (KTX·ITX)</option>
+                    <option value="flight">✈️ 비행기 (직항 우선)</option>
                   </select>
                 </div>
               </div>
@@ -253,7 +255,7 @@
               <div id="tripItineraryList" class="timeline-list"></div>
 
               <p style="margin:14px 0 0; font-size:0.77rem; color:var(--text-muted);">
-                * 입력한 기간에 '개화 시작 ~ 만개'로 예측되는 지역만 자동으로 추려 이동시간까지 고려한 최적 순서로 배열했습니다.
+                * 입력한 기간에 '개화 시작 ~ 만개'로 예측되는 지역을 남→북 흐름으로 자동 배열하며, 각 구간 카드의 버튼으로 이동수단(자동차·버스·KTX·비행기)을 개별 변경할 수 있습니다.
               </p>
             </div>
           </div>
@@ -261,10 +263,16 @@
           <div class="card">
             <div style="margin-bottom:12px;">
               <h3 class="card-title">추천 동선 지도</h3>
-              <p class="card-sub" id="tripMapSubtitle">일자별 방문 순서와 실제 도로 이동 경로를 표시합니다</p>
+              <p class="card-sub" id="tripMapSubtitle">일자별 방문 순서와 구간별 도로·철도·항공 경로를 표시합니다</p>
             </div>
             <div class="map-canvas-box trip-map-box">
               <div id="tripMap"></div>
+            </div>
+            <div class="trip-legend-row" aria-label="경로 색상 안내">
+              <span class="trip-legend-item"><span class="legend-swatch swatch-car"></span>자동차</span>
+              <span class="trip-legend-item"><span class="legend-swatch swatch-bus"></span>고속·시외버스</span>
+              <span class="trip-legend-item"><span class="legend-swatch swatch-rail"></span>기차(KTX·ITX)</span>
+              <span class="trip-legend-item"><span class="legend-swatch swatch-flight"></span>비행기 항로</span>
             </div>
           </div>
         </div>

@@ -17,6 +17,105 @@
   const DEFAULT_BASELINE_DELTA_S = -40.0; // 전국 내륙 봄철(2~3월) 평균 누적 물수지 저류변화 기준(mm)
   const WATER_BALANCE_COUPLING_K = 0.22; // ΔS 1mm 변화당 유효 GDD 임계값 보정 계수 (°C·day / mm)
 
+  // 제주 ↔ 육지 국내선 항공 + 공항 접근 소요시간 (순수 비행시간 + 공항/시내 이동시간 기준)
+  const JEJU_CITY_ACCESS_MIN = 10; // 제주국제공항 ↔ 제주시내
+  const SEOGWIPO_ACCESS_MIN = 50; // 제주국제공항 ↔ 서귀포 시내
+
+  const VERIFIED_JEJU_FLIGHTS = {
+    "108": { airport: "김포", flightMin: 70, accessMin: 35 },
+    "119": { airport: "김포", flightMin: 70, accessMin: 55 },
+    "131": { airport: "청주", flightMin: 65, accessMin: 25 },
+    "133": { airport: "청주", flightMin: 65, accessMin: 45 },
+    "143": { airport: "대구", flightMin: 65, accessMin: 25 },
+    "283": { airport: "포항경주", flightMin: 65, accessMin: 35 },
+    "159": { airport: "김해", flightMin: 65, accessMin: 30 },
+    "155": { airport: "김해", flightMin: 65, accessMin: 40 },
+    "156": { airport: "광주", flightMin: 55, accessMin: 25 },
+    "146": { airport: "군산", flightMin: 55, accessMin: 50 },
+    "168": { airport: "여수", flightMin: 55, accessMin: 25 },
+    "101": { airport: "원주", flightMin: 70, accessMin: 60 },
+    "105": { airport: "원주", flightMin: 70, accessMin: 75 },
+  };
+
+  // 내륙 정기 국내선 직항 노선 (대구는 평시 정기 내륙 노선 미운항으로 제외)
+  const VERIFIED_DOMESTIC_FLIGHTS = {
+    "108-159": { fromAirport: "김포", toAirport: "김해", flightMin: 60, accessMin: 65 },
+    "119-159": { fromAirport: "김포", toAirport: "김해", flightMin: 60, accessMin: 85 },
+    "108-155": { fromAirport: "김포", toAirport: "김해", flightMin: 60, accessMin: 75 },
+    "108-168": { fromAirport: "김포", toAirport: "여수", flightMin: 55, accessMin: 60 },
+    "108-156": { fromAirport: "김포", toAirport: "광주", flightMin: 55, accessMin: 60 },
+    "108-283": { fromAirport: "김포", toAirport: "포항경주", flightMin: 55, accessMin: 70 },
+  };
+
+  // 전국 고속·시외버스 주요 공시 소요시간(분)
+  const VERIFIED_EXPRESS_BUS_MINUTES = {
+    "108-119": 55,
+    "108-101": 90,
+    "108-131": 90,
+    "108-133": 120,
+    "108-146": 160,
+    "108-105": 170,
+    "108-156": 200,
+    "108-143": 210,
+    "108-283": 210,
+    "108-155": 235,
+    "108-159": 240,
+    "108-168": 255,
+    "184-189": 65,
+    "159-155": 60,
+    "159-283": 55,
+    "159-143": 75,
+    "143-283": 55,
+    "146-156": 70,
+    "133-131": 45,
+    "133-146": 65,
+    "133-143": 115,
+    "133-156": 130,
+    "156-168": 100,
+  };
+
+  // 코레일 KTX / ITX-청춘 실제 공시 소요시간(분)
+  const VERIFIED_RAIL_MINUTES = {
+    "108-119": 34,
+    "108-131": 72,
+    "108-133": 59,
+    "108-143": 108,
+    "108-159": 158,
+    "108-146": 98,
+    "108-156": 108,
+    "108-283": 128,
+    "108-155": 172,
+    "108-105": 115,
+    "108-101": 72,
+    "108-168": 168,
+    "119-133": 65,
+    "119-143": 112,
+    "119-159": 162,
+    "131-133": 35,
+    "133-143": 45,
+    "133-159": 100,
+    "133-283": 68,
+    "133-146": 68,
+    "133-156": 92,
+    "133-155": 122,
+    "133-168": 125,
+    "143-159": 48,
+    "143-283": 22,
+    "143-155": 66,
+    "146-168": 96,
+    "159-283": 32,
+  };
+
+  function haversineKm(lat1, lon1, lat2, lon2) {
+    const rad = Math.PI / 180;
+    const dLat = (lat2 - lat1) * rad;
+    const dLon = (lon2 - lon1) * rad;
+    const a =
+      Math.sin(dLat / 2) ** 2 +
+      Math.cos(lat1 * rad) * Math.cos(lat2 * rad) * Math.sin(dLon / 2) ** 2;
+    return Number((2 * 6371.0 * Math.asin(Math.min(1, Math.sqrt(a)))).toFixed(1));
+  }
+
   const STAGE_META = {
     scheduled: {
       key: "scheduled",
@@ -250,37 +349,362 @@
     return results;
   }
 
+  function lookupSymmetric(mapObj, idA, idB) {
+    return mapObj[`${idA}-${idB}`] ?? mapObj[`${idB}-${idA}`] ?? null;
+  }
+
   /**
-   * 두 지점 간 이동 소요시간(분), 거리(km), 이동수단 라벨 조회 (OSRM 실측 + KTX/시외버스)
+   * 기존 routingMatrix에 복합 교통수단(고속버스·KTX·국내선 항공) 및 해상 자동차 차단 정보를 보강한다.
    */
-  function getTravelLeg(routingMatrix, fromStationId, toStationId, transportMode = "car") {
+  function ensureMultimodalRouting(data) {
+    if (!data || !data.routingMatrix) return null;
+    const rm = data.routingMatrix;
+    if (rm.multimodalVersion === 2) return rm;
+
+    const idList = rm.stationIds || [];
+    const stationById = Object.fromEntries((data.stations || []).map((s) => [s.id, s]));
+    const oldDrivingMin = rm.drivingMinutes || [];
+    const oldDrivingKm = rm.drivingKm || [];
+
+    const drivingMinutes = [];
+    const drivingKm = [];
+    const busMinutes = [];
+    const busModes = [];
+    const railMinutes = [];
+    const railModes = [];
+    const flightMinutes = [];
+    const flightModes = [];
+    const flightDetails = [];
+    const flightKm = [];
+    const transitMinutes = [];
+    const transitModes = [];
+
+    for (let i = 0; i < idList.length; i++) {
+      const sidA = idList[i];
+      const stA = stationById[sidA];
+      const dMinRow = [];
+      const dKmRow = [];
+      const bMinRow = [];
+      const bModeRow = [];
+      const rMinRow = [];
+      const rModeRow = [];
+      const fMinRow = [];
+      const fModeRow = [];
+      const fDetRow = [];
+      const fKmRow = [];
+      const tMinRow = [];
+      const tModeRow = [];
+
+      for (let j = 0; j < idList.length; j++) {
+        const sidB = idList[j];
+        const stB = stationById[sidB];
+
+        if (i === j) {
+          dMinRow.push(0);
+          dKmRow.push(0);
+          bMinRow.push(0);
+          bModeRow.push("동일지점");
+          rMinRow.push(null);
+          rModeRow.push(null);
+          fMinRow.push(null);
+          fModeRow.push(null);
+          fDetRow.push(null);
+          fKmRow.push(0);
+          tMinRow.push(0);
+          tModeRow.push("동일지점");
+          continue;
+        }
+
+        const isSeaCrossing = stA && stB ? stA.isIsland !== stB.isIsland : false;
+        if (isSeaCrossing) {
+          // 육지 ↔ 제주/서귀포 해상 구간은 자동차 이동 불가 -> null 처리 후 국내선 항공으로 계산
+          dMinRow.push(null);
+          dKmRow.push(null);
+          bMinRow.push(null);
+          bModeRow.push(null);
+          rMinRow.push(null);
+          rModeRow.push(null);
+
+          const mainlandId = stA.isIsland ? sidB : sidA;
+          const islandId = stA.isIsland ? sidA : sidB;
+          const info = VERIFIED_JEJU_FLIGHTS[mainlandId] || { airport: "김포", flightMin: 70, accessMin: 40 };
+          const islandAccess = islandId === "189" ? SEOGWIPO_ACCESS_MIN : JEJU_CITY_ACCESS_MIN;
+          const totalMin = info.flightMin + info.accessMin + islandAccess;
+          const transferMin = info.accessMin + islandAccess;
+          const depArr = stA.isIsland ? `제주→${info.airport}` : `${info.airport}→제주`;
+          const transferLabel = islandId === "189" ? "공항·서귀포 이동" : "공항 이동";
+          const modeStr = `✈️ 비행기 (${depArr})`;
+
+          fMinRow.push(totalMin);
+          fModeRow.push(modeStr);
+          fDetRow.push(
+            `비행 ${formatDurationMinutes(info.flightMin)} + ${transferLabel} ${formatDurationMinutes(transferMin)}`
+          );
+          fKmRow.push(haversineKm(stA.lat, stA.lon, stB.lat, stB.lon));
+          tMinRow.push(totalMin);
+          tModeRow.push(modeStr);
+          continue;
+        }
+
+        const driveM = oldDrivingMin[i]?.[j] ?? null;
+        const driveK = oldDrivingKm[i]?.[j] ?? null;
+        dMinRow.push(driveM);
+        dKmRow.push(driveK);
+
+        let busVal = lookupSymmetric(VERIFIED_EXPRESS_BUS_MINUTES, sidA, sidB);
+        if (busVal == null) {
+          busVal = Math.round((driveM ?? 150) * 1.15 + 15);
+        }
+        const busLbl = stA?.isIsland ? "🚌 공항리무진·급행버스" : "🚌 고속·시외버스";
+        bMinRow.push(busVal);
+        bModeRow.push(busLbl);
+
+        const railVal = lookupSymmetric(VERIFIED_RAIL_MINUTES, sidA, sidB);
+        if (railVal != null) {
+          rMinRow.push(railVal);
+          rModeRow.push("🚄 KTX·ITX");
+          tMinRow.push(railVal);
+          tModeRow.push("🚄 KTX·ITX");
+        } else {
+          rMinRow.push(null);
+          rModeRow.push(null);
+          tMinRow.push(busVal);
+          tModeRow.push(busLbl);
+        }
+
+        const directKey = `${sidA}-${sidB}`;
+        const revKey = `${sidB}-${sidA}`;
+        let fInfo = VERIFIED_DOMESTIC_FLIGHTS[directKey] || null;
+        let depAirport = fInfo?.fromAirport;
+        let arrAirport = fInfo?.toAirport;
+        if (!fInfo && VERIFIED_DOMESTIC_FLIGHTS[revKey]) {
+          fInfo = VERIFIED_DOMESTIC_FLIGHTS[revKey];
+          depAirport = fInfo.toAirport;
+          arrAirport = fInfo.fromAirport;
+        }
+
+        if (fInfo) {
+          fMinRow.push(fInfo.flightMin + fInfo.accessMin);
+          fModeRow.push(`✈️ 비행기 (${depAirport}→${arrAirport})`);
+          fDetRow.push(
+            `비행 ${formatDurationMinutes(fInfo.flightMin)} + 공항 이동 ${formatDurationMinutes(fInfo.accessMin)}`
+          );
+          fKmRow.push(haversineKm(stA.lat, stA.lon, stB.lat, stB.lon));
+        } else {
+          fMinRow.push(null);
+          fModeRow.push(null);
+          fDetRow.push(null);
+          fKmRow.push(null);
+        }
+      }
+
+      drivingMinutes.push(dMinRow);
+      drivingKm.push(dKmRow);
+      busMinutes.push(bMinRow);
+      busModes.push(bModeRow);
+      railMinutes.push(rMinRow);
+      railModes.push(rModeRow);
+      flightMinutes.push(fMinRow);
+      flightModes.push(fModeRow);
+      flightDetails.push(fDetRow);
+      flightKm.push(fKmRow);
+      transitMinutes.push(tMinRow);
+      transitModes.push(tModeRow);
+    }
+
+    rm.multimodalVersion = 2;
+    rm.drivingMinutes = drivingMinutes;
+    rm.drivingKm = drivingKm;
+    rm.busMinutes = busMinutes;
+    rm.busModes = busModes;
+    rm.railMinutes = railMinutes;
+    rm.railModes = railModes;
+    rm.flightMinutes = flightMinutes;
+    rm.flightModes = flightModes;
+    rm.flightDetails = flightDetails;
+    rm.flightKm = flightKm;
+    rm.transitMinutes = transitMinutes;
+    rm.transitModes = transitModes;
+    return rm;
+  }
+
+  /**
+   * 두 지점 간 이동 소요시간(분), 거리(km), 이동수단 정보 조회
+   * - 육지 ↔ 제주/서귀포 해상 구간은 선택한 수단과 무관하게 국내선 항공으로 자동 전환
+   */
+  function getTravelLeg(routingMatrix, fromStationId, toStationId, transportMode = "car", stations = null) {
     const ids = routingMatrix.stationIds;
     const i = ids.indexOf(fromStationId);
     const j = ids.indexOf(toStationId);
     if (i === -1 || j === -1) {
-      return { minutes: 120, km: 140, modeLabel: "도로 이동" };
-    }
-    if (transportMode === "transit") {
       return {
-        minutes: routingMatrix.transitMinutes[i][j],
-        km: routingMatrix.drivingKm[i][j],
-        modeLabel: routingMatrix.transitModes[i][j],
+        minutes: 120,
+        km: 140,
+        modeType: "car",
+        modeLabel: "🚗 자동차",
+        detail: "도로 이동",
+        autoSwitched: false,
+        autoReason: null,
       };
     }
+
+    const mode = transportMode === "transit" ? "rail" : transportMode || "car";
+    if (i === j) {
+      return {
+        minutes: 0,
+        km: 0,
+        modeType: mode,
+        modeLabel: "동일지점",
+        detail: "출발지 인근 방문",
+        autoSwitched: false,
+        autoReason: null,
+      };
+    }
+
+    const stA = stations ? stations.find((s) => s.id === fromStationId) : null;
+    const stB = stations ? stations.find((s) => s.id === toStationId) : null;
+    const isSeaCrossing =
+      stA && stB ? stA.isIsland !== stB.isIsland : routingMatrix.drivingMinutes?.[i]?.[j] == null;
+
+    if (isSeaCrossing) {
+      return {
+        minutes: routingMatrix.flightMinutes?.[i]?.[j] ?? routingMatrix.transitMinutes?.[i]?.[j] ?? 120,
+        km: routingMatrix.flightKm?.[i]?.[j] ?? (stA && stB ? haversineKm(stA.lat, stA.lon, stB.lat, stB.lon) : 420),
+        modeType: "flight",
+        modeLabel: routingMatrix.flightModes?.[i]?.[j] || "✈️ 비행기",
+        detail: routingMatrix.flightDetails?.[i]?.[j] || "국내선 항공 이동",
+        autoSwitched: mode !== "flight",
+        autoReason: mode !== "flight" ? "제주 해상 구간 · 항공 자동 전환" : null,
+      };
+    }
+
+    const bothIsland = Boolean(stA && stB && stA.isIsland && stB.isIsland);
+    const roadKm = routingMatrix.drivingKm?.[i]?.[j] ?? null;
+
+    if (mode === "bus") {
+      return {
+        minutes: routingMatrix.busMinutes?.[i]?.[j] ?? routingMatrix.transitMinutes?.[i]?.[j] ?? 150,
+        km: roadKm,
+        modeType: "bus",
+        modeLabel: routingMatrix.busModes?.[i]?.[j] || (bothIsland ? "🚌 공항리무진·급행버스" : "🚌 고속·시외버스"),
+        detail: bothIsland
+          ? `제주 시외·리무진 노선 기준${roadKm != null ? ` (${roadKm}km)` : ""}`
+          : roadKm != null
+          ? `고속·시외버스 도로 약 ${roadKm}km`
+          : "고속·시외버스",
+        autoSwitched: false,
+        autoReason: null,
+      };
+    }
+
+    if (mode === "rail") {
+      if (routingMatrix.railMinutes?.[i]?.[j] != null) {
+        return {
+          minutes: routingMatrix.railMinutes[i][j],
+          km: roadKm,
+          modeType: "rail",
+          modeLabel: routingMatrix.railModes?.[i]?.[j] || "🚄 KTX·ITX",
+          detail: roadKm != null ? `코레일 공시 소요시간 기준 (${roadKm}km)` : "코레일 공시 소요시간 기준",
+          autoSwitched: false,
+          autoReason: null,
+        };
+      }
+      return {
+        minutes: routingMatrix.busMinutes?.[i]?.[j] ?? 150,
+        km: roadKm,
+        modeType: "bus",
+        modeLabel: routingMatrix.busModes?.[i]?.[j] || (bothIsland ? "🚌 공항리무진·급행버스" : "🚌 고속·시외버스"),
+        detail: bothIsland ? "제주 철도 없음 · 시외버스 연계" : "철도 미직통 구간 · 버스 연계",
+        autoSwitched: true,
+        autoReason: bothIsland ? "제주 철도 없음 · 버스 연계" : "철도 미직통 · 버스 연계",
+      };
+    }
+
+    if (mode === "flight") {
+      if (routingMatrix.flightMinutes?.[i]?.[j] != null) {
+        return {
+          minutes: routingMatrix.flightMinutes[i][j],
+          km: routingMatrix.flightKm?.[i]?.[j] ?? roadKm,
+          modeType: "flight",
+          modeLabel: routingMatrix.flightModes?.[i]?.[j] || "✈️ 비행기",
+          detail: routingMatrix.flightDetails?.[i]?.[j] || "국내선 직항 노선",
+          autoSwitched: false,
+          autoReason: null,
+        };
+      }
+      if (routingMatrix.railMinutes?.[i]?.[j] != null) {
+        return {
+          minutes: routingMatrix.railMinutes[i][j],
+          km: roadKm,
+          modeType: "rail",
+          modeLabel: routingMatrix.railModes?.[i]?.[j] || "🚄 KTX·ITX",
+          detail: "국내선 미운항 구간 · KTX·ITX 연계",
+          autoSwitched: true,
+          autoReason: "국내선 미운항 · KTX 연계",
+        };
+      }
+      return {
+        minutes: routingMatrix.busMinutes?.[i]?.[j] ?? 150,
+        km: roadKm,
+        modeType: "bus",
+        modeLabel: routingMatrix.busModes?.[i]?.[j] || (bothIsland ? "🚌 공항리무진·급행버스" : "🚌 고속·시외버스"),
+        detail: bothIsland ? "제주 내부 구간 · 버스 이동" : "국내선 미운항 · 버스 연계",
+        autoSwitched: true,
+        autoReason: bothIsland ? "제주 내부 · 버스 이동" : "국내선 미운항 · 버스 연계",
+      };
+    }
+
     return {
-      minutes: routingMatrix.drivingMinutes[i][j],
-      km: routingMatrix.drivingKm[i][j],
-      modeLabel: "자동차",
+      minutes: routingMatrix.drivingMinutes?.[i]?.[j] ?? 120,
+      km: roadKm,
+      modeType: "car",
+      modeLabel: "🚗 자동차",
+      detail: roadKm != null ? `도로 주행 약 ${roadKm}km` : "도로 주행",
+      autoSwitched: false,
+      autoReason: null,
     };
+  }
+
+  /**
+   * 두 지점 구간에서 사용자가 직접 선택할 수 있는 유효 교통수단 목록 반환
+   */
+  function getAvailableModesForPair(data, fromStationId, toStationId) {
+    if (!data || fromStationId === toStationId) return [];
+    const rm = ensureMultimodalRouting(data);
+    const ids = rm?.stationIds || [];
+    const i = ids.indexOf(fromStationId);
+    const j = ids.indexOf(toStationId);
+    if (i === -1 || j === -1) return [];
+
+    const stA = data.stations.find((s) => s.id === fromStationId);
+    const stB = data.stations.find((s) => s.id === toStationId);
+    if (stA && stB && stA.isIsland !== stB.isIsland) {
+      return [{ modeType: "flight", chipLabel: "✈️ 비행기" }];
+    }
+
+    const bothIsland = Boolean(stA && stB && stA.isIsland && stB.isIsland);
+    const modes = [
+      { modeType: "car", chipLabel: "🚗 자동차" },
+      { modeType: "bus", chipLabel: bothIsland ? "🚌 리무진·급행" : "🚌 고속버스" },
+    ];
+    if (rm.railMinutes?.[i]?.[j] != null) {
+      modes.push({ modeType: "rail", chipLabel: "🚄 KTX·ITX" });
+    }
+    if (rm.flightMinutes?.[i]?.[j] != null) {
+      modes.push({ modeType: "flight", chipLabel: "✈️ 비행기" });
+    }
+    return modes;
   }
 
   /**
    * 기능 2: 로드트립 경로 자동 추천 알고리즘 (발표자료 12p 구현)
    * - STEP 1: 출발지, 날짜 범위(시작일~종료일), 교통수단, 호우특보 지역 제외 여부 입력
-   * - STEP 2: 여행 일자별 '개화 시작 ~ 만개' 단계인 지역 자동 필터링 (제주 섬 지역은 출발지거나 옵션 허용 시 포함)
+   * - STEP 2: 여행 일자별 '개화 시작 ~ 만개' 단계인 지역 자동 필터링 (제주 출발 시 육지 포함 연계 추천)
    * - STEP 3: 남→북 개화 전선 및 이동시간을 함께 고려해 일자별 최적 동선 구성
    */
   function planRoadTrip(data, evaluations, params) {
+    ensureMultimodalRouting(data);
+
     const {
       originId = "108",
       startDate = "2026-04-03",
@@ -300,6 +724,7 @@
     let prevStationId = originId;
     let totalMinutes = 0;
     let totalKm = 0;
+    let seaCrossCount = 0;
 
     for (let dayIdx = 0; dayIdx < totalDays; dayIdx++) {
       const currentDate = addDaysIso(startDate, dayIdx);
@@ -337,12 +762,13 @@
 
       if (candidates.length === 0) break;
 
-      // 점수 계산: 만개(+30), 개화 시작(+22), 축제 기간 일치(+14), 남→북 진행 방향(+위도 순위), 이동시간 패널티
-      // 마지막 날일수록 출발지 복귀 편의성도 약간 가중
+      const prevStation = evalMap[prevStationId]?.station || originStation;
+
+      // 점수 계산: 만개(+35), 개화 시작(+25), 축제 기간 일치(+16), 남→북 진행 방향, 이동시간 패널티 + 왕복 바다 횡단 억제
       const scored = candidates.map((ev) => {
         const st = ev.station;
         const stStage = getStageOnDate(ev, currentDate);
-        const leg = getTravelLeg(data.routingMatrix, prevStationId, st.id, transportMode);
+        const leg = getTravelLeg(data.routingMatrix, prevStationId, st.id, transportMode, data.stations);
         const fest = st.festival;
         const isFestivalActive = fest && currentDate >= fest.start && currentDate <= fest.end;
 
@@ -362,12 +788,20 @@
         const mins = leg.minutes ?? 240;
         score -= mins / 15.0;
 
+        // 이미 육지↔제주 항공을 1회 이용했다면 불필요한 반복 해상 횡단 방지
+        if (prevStation.isIsland !== st.isIsland && seaCrossCount >= 1) {
+          score -= 45;
+        }
+
         return { ev, stStage, leg, isFestivalActive, score };
       });
 
       scored.sort((a, b) => b.score - a.score);
       const picked = scored[0];
-      const prevStation = evalMap[prevStationId]?.station || originStation;
+
+      if (prevStation.isIsland !== picked.ev.station.isIsland) {
+        seaCrossCount += 1;
+      }
 
       visitedIds.add(picked.ev.station.id);
       totalMinutes += picked.leg.minutes || 0;
@@ -381,6 +815,8 @@
         toStation: picked.ev.station,
         stage: picked.stStage,
         leg: picked.leg,
+        availableModes: getAvailableModesForPair(data, prevStation.id, picked.ev.station.id),
+        userOverridden: false,
         isFestivalActive: picked.isFestivalActive,
         festival: picked.ev.station.festival,
         dayMetrics: picked.ev.byDate[currentDate] || picked.ev.dayMetrics,
@@ -401,6 +837,34 @@
       totalMinutes,
       totalKm: Number(totalKm.toFixed(1)),
     };
+  }
+
+  /**
+   * 추천된 일정의 특정 구간(dayIndex) 교통수단을 개별 변경하고 총 이동시간·거리 재계산
+   */
+  function updateTripLegMode(data, trip, dayIndex, newModeType) {
+    if (!trip || !trip.itinerary || !trip.itinerary[dayIndex]) return trip;
+    ensureMultimodalRouting(data);
+
+    const day = trip.itinerary[dayIndex];
+    day.leg = getTravelLeg(
+      data.routingMatrix,
+      day.fromStation.id,
+      day.toStation.id,
+      newModeType,
+      data.stations
+    );
+    day.userOverridden = true;
+
+    let totalMinutes = 0;
+    let totalKm = 0;
+    for (const item of trip.itinerary) {
+      totalMinutes += item.leg?.minutes || 0;
+      totalKm += item.leg?.km || 0;
+    }
+    trip.totalMinutes = totalMinutes;
+    trip.totalKm = Number(totalKm.toFixed(1));
+    return trip;
   }
 
   /**
@@ -455,8 +919,11 @@
     getStageOnDate,
     getProgressPctOnDate,
     evaluateAllStations,
+    ensureMultimodalRouting,
     getTravelLeg,
+    getAvailableModesForPair,
     planRoadTrip,
+    updateTripLegMode,
     evaluateWeatherHazards,
   };
 })(window);

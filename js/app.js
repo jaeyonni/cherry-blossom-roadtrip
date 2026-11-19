@@ -15,6 +15,8 @@
     return;
   }
 
+  H.ensureMultimodalRouting(DATA);
+
   const KOREA_BOUNDS = [
     [33.15, 126.2],
     [38.05, 129.45],
@@ -66,6 +68,61 @@
   };
 
   const osrmRouteCache = new Map();
+  let tripDrawSeq = 0;
+
+  function buildBezierArc(fromLatLng, toLatLng, curveRatio = 0.14, steps = 28) {
+    const [lat1, lon1] = fromLatLng;
+    const [lat2, lon2] = toLatLng;
+    const dLat = lat2 - lat1;
+    const dLon = lon2 - lon1;
+    const midLat = (lat1 + lat2) / 2;
+    const midLon = (lon1 + lon2) / 2;
+
+    let nx = -dLon;
+    let ny = dLat;
+    if (nx < 0 || (Math.abs(nx) < 0.05 && ny < 0)) {
+      nx = -nx;
+      ny = -ny;
+    }
+
+    const ctrlLat = midLat + nx * curveRatio;
+    const ctrlLon = midLon + ny * curveRatio;
+    const points = [];
+    for (let s = 0; s <= steps; s++) {
+      const t = s / steps;
+      const mt = 1 - t;
+      points.push([
+        mt * mt * lat1 + 2 * mt * t * ctrlLat + t * t * lat2,
+        mt * mt * lon1 + 2 * mt * t * ctrlLon + t * t * lon2,
+      ]);
+    }
+    const midPoint = [
+      0.25 * lat1 + 0.5 * ctrlLat + 0.25 * lat2,
+      0.25 * lon1 + 0.5 * ctrlLon + 0.25 * lon2,
+    ];
+    return { points, midPoint };
+  }
+
+  async function fetchLegRoadCoords(fromSt, toSt) {
+    const key = `${fromSt.id}-${toSt.id}`;
+    if (osrmRouteCache.has(key)) return osrmRouteCache.get(key);
+    try {
+      const url = `https://router.project-osrm.org/route/v1/driving/${fromSt.lon},${fromSt.lat};${toSt.lon},${toSt.lat}?overview=full&geometries=geojson`;
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), 2500);
+      const resp = await fetch(url, { signal: controller.signal });
+      clearTimeout(timer);
+      if (resp.ok) {
+        const json = await resp.json();
+        if (json.routes?.[0]?.geometry?.coordinates) {
+          const coords = json.routes[0].geometry.coordinates.map(([lon, lat]) => [lat, lon]);
+          osrmRouteCache.set(key, coords);
+          return coords;
+        }
+      }
+    } catch (_) {}
+    return null;
+  }
 
   function showToast(msg) {
     const el = document.getElementById("toast");
@@ -206,48 +263,85 @@
   }
 
   async function drawTripRouteOnTripMap(trip, shouldFitBounds = false) {
+    const mySeq = ++tripDrawSeq;
     maps.tripRouteLayer.clearLayers();
     maps.tripMarkersLayer.clearLayers();
 
     if (!trip || !trip.itinerary.length) return;
 
-    const stops = [trip.originStation, ...trip.itinerary.map((d) => d.toStation)];
-    const uniqueStops = stops.filter((st, idx) => idx === 0 || st.id !== stops[idx - 1].id);
-    if (uniqueStops.length < 2) return;
+    // 자동차·버스 구간만 OSRM 실제 도로 폴리라인을 구간별로 병렬 조회
+    const roadGeoms = await Promise.all(
+      trip.itinerary.map(async (day) => {
+        const isRoadLeg = day.leg?.modeType === "car" || day.leg?.modeType === "bus";
+        const sameRegion = day.fromStation.isIsland === day.toStation.isIsland;
+        if (!isRoadLeg || !sameRegion || day.fromStation.id === day.toStation.id) {
+          return null;
+        }
+        return fetchLegRoadCoords(day.fromStation, day.toStation);
+      })
+    );
 
-    const hasIslandCross = uniqueStops.some((s) => s.isIsland) && uniqueStops.some((s) => !s.isIsland);
-    const cacheKey = uniqueStops.map((s) => s.id).join("-");
+    if (mySeq !== tripDrawSeq) return;
 
-    let latLngs = null;
-    if (!hasIslandCross && trip.transportMode === "car") {
-      if (osrmRouteCache.has(cacheKey)) {
-        latLngs = osrmRouteCache.get(cacheKey);
+    maps.tripRouteLayer.clearLayers();
+    maps.tripMarkersLayer.clearLayers();
+
+    const boundsPoints = [[trip.originStation.lat, trip.originStation.lon]];
+
+    trip.itinerary.forEach((day, idx) => {
+      const fromSt = day.fromStation;
+      const toSt = day.toStation;
+      boundsPoints.push([toSt.lat, toSt.lon]);
+      if (fromSt.id === toSt.id) return;
+
+      const pA = [fromSt.lat, fromSt.lon];
+      const pB = [toSt.lat, toSt.lon];
+      const modeType = day.leg?.modeType || "car";
+
+      if (modeType === "flight") {
+        const { points, midPoint } = buildBezierArc(pA, pB, 0.26, 28);
+        L.polyline(points, {
+          color: "#B85D79",
+          weight: 3.5,
+          opacity: 0.92,
+          dashArray: "7 7",
+        }).addTo(maps.tripRouteLayer);
+
+        L.marker(midPoint, {
+          interactive: false,
+          icon: L.divIcon({
+            className: "cherry-pin-wrap",
+            html: `<div class="flight-mid-badge">✈️ ${H.formatDurationMinutes(day.leg.minutes)}</div>`,
+            iconSize: [0, 0],
+            iconAnchor: [0, 0],
+          }),
+        }).addTo(maps.tripRouteLayer);
+
+        boundsPoints.push(midPoint);
+      } else if (modeType === "rail") {
+        const { points } = buildBezierArc(pA, pB, 0.05, 18);
+        L.polyline(points, {
+          color: "#3D6B82",
+          weight: 4,
+          opacity: 0.9,
+          dashArray: "5 7",
+        }).addTo(maps.tripRouteLayer);
       } else {
-        try {
-          const coordParam = uniqueStops.map((s) => `${s.lon},${s.lat}`).join(";");
-          const url = `https://router.project-osrm.org/route/v1/driving/${coordParam}?overview=full&geometries=geojson`;
-          const resp = await fetch(url);
-          if (resp.ok) {
-            const json = await resp.json();
-            if (json.routes?.[0]?.geometry?.coordinates) {
-              latLngs = json.routes[0].geometry.coordinates.map(([lon, lat]) => [lat, lon]);
-              osrmRouteCache.set(cacheKey, latLngs);
-            }
-          }
-        } catch (_) {}
+        const osrmCoords = roadGeoms[idx];
+        const polyPts = osrmCoords && osrmCoords.length > 1 ? osrmCoords : [pA, pB];
+        const isBus = modeType === "bus";
+        L.polyline(polyPts, {
+          color: isBus ? "#2D6A4F" : "#1D352B",
+          weight: osrmCoords ? (isBus ? 4.2 : 4.5) : 3.5,
+          opacity: 0.88,
+          dashArray: isBus ? "10 6" : osrmCoords ? null : "6 6",
+        }).addTo(maps.tripRouteLayer);
+
+        if (osrmCoords && osrmCoords.length > 2) {
+          boundsPoints.push(osrmCoords[Math.floor(osrmCoords.length / 2)]);
+        }
       }
-    }
-
-    const fallbackLatLngs = uniqueStops.map((s) => [s.lat, s.lon]);
-    const polyPoints = latLngs || fallbackLatLngs;
-    const style = {
-      color: trip.transportMode === "car" ? "#1D352B" : "#B85D79",
-      weight: latLngs ? 5 : 3.5,
-      opacity: 0.85,
-      dashArray: latLngs ? null : "8 8",
-    };
-
-    const tripPoly = L.polyline(polyPoints, style).addTo(maps.tripRouteLayer);
+    });
 
     const originIcon = L.divIcon({
       className: "cherry-pin-wrap",
@@ -270,7 +364,11 @@
     document.getElementById("tripMapSubtitle").textContent = `${trip.originStation.name} 출발 ${trip.totalDays}일 코스 · 총 이동 ${H.formatDurationMinutes(trip.totalMinutes)} (${trip.totalKm}km)`;
 
     if (shouldFitBounds || state.activeView === "trip") {
-      maps.trip.fitBounds(tripPoly.getBounds().pad(0.24));
+      if (boundsPoints.length <= 1) {
+        maps.trip.setView(boundsPoints[0], 9);
+      } else {
+        maps.trip.fitBounds(L.latLngBounds(boundsPoints).pad(0.22));
+      }
     }
   }
 
@@ -313,13 +411,15 @@
 
   function renderRecommendBanner() {
     const originId = document.getElementById("tripOrigin")?.value || "108";
-    // 육지 우선으로 가장 추천할 만한 명소 선정 (만개 우선 + 축제 진행 중)
+    const transportMode = document.getElementById("tripTransport")?.value || "car";
+    const originStation = DATA.stations.find((s) => s.id === originId);
+    // 출발지가 제주일 때는 육지·도내 모두 공정 평가, 육지 출발일 때는 육지 우선
     const ranked = [...state.currentEvaluations].sort((a, b) => {
       const stageScore = (e) => (e.stage.key === "full" ? 30 : e.stage.key === "opening" ? 20 : 0);
       const festA = a.station.festival && state.targetDate >= a.station.festival.start && state.targetDate <= a.station.festival.end ? 8 : 0;
       const festB = b.station.festival && state.targetDate >= b.station.festival.start && state.targetDate <= b.station.festival.end ? 8 : 0;
-      const mainlandA = a.station.isIsland ? 0 : 4;
-      const mainlandB = b.station.isIsland ? 0 : 4;
+      const mainlandA = originStation?.isIsland || !a.station.isIsland ? 4 : 0;
+      const mainlandB = originStation?.isIsland || !b.station.isIsland ? 4 : 0;
       return stageScore(b) + festB + mainlandB - (stageScore(a) + festA + mainlandA);
     });
     const best = ranked[0];
@@ -329,7 +429,8 @@
       DATA.routingMatrix,
       originId,
       best.station.id,
-      best.station.isIsland ? "transit" : "car"
+      transportMode,
+      DATA.stations
     );
     const daysToOpen = H.diffDaysIso(state.targetDate, best.predictedOpenDate);
     const ddayText =
@@ -342,9 +443,10 @@
         : "추천";
 
     const festName = best.station.festival?.name || best.station.spotName;
-    const travelLabel = best.station.isIsland
-      ? `항공 약 ${H.formatDurationMinutes(leg.minutes)}`
-      : `이동 ${H.formatDurationMinutes(leg.minutes)}`;
+    const travelLabel =
+      best.station.id === originId
+        ? "출발지 인근"
+        : `${leg.modeLabel} 약 ${H.formatDurationMinutes(leg.minutes)}`;
 
     document.getElementById("recommendDday").textContent = ddayText;
     document.getElementById("recommendTitle").textContent = `이번 기준일 추천 · ${best.station.name}`;
@@ -399,6 +501,102 @@
     reportSel.value = "133";
   }
 
+  function renderTripResult(trip, shouldFitBounds = false) {
+    if (!trip) return;
+    const nights = Math.max(0, trip.totalDays - 1);
+    const stayLabel = nights === 0 ? "당일치기" : `${nights}박 ${trip.totalDays}일`;
+    document.getElementById("tripHeaderSummary").textContent = `${H.formatKoreanDate(trip.startDate)} ~ ${H.formatKoreanDate(trip.endDate)} · ${stayLabel} · 총 이동 ${H.formatDurationMinutes(trip.totalMinutes)} (${trip.totalKm}km)`;
+
+    const listEl = document.getElementById("tripItineraryList");
+    if (!trip.itinerary.length) {
+      listEl.innerHTML = `<div style="padding:12px; color:var(--text-muted);">선택하신 조건에 맞는 일정을 생성할 수 없습니다.</div>`;
+      maps.tripRouteLayer?.clearLayers();
+      maps.tripMarkersLayer?.clearLayers();
+      return;
+    }
+
+    listEl.innerHTML = trip.itinerary
+      .map((day, idx) => {
+        const circleClass = idx === 0 ? "day1" : idx === 1 ? "day2" : "";
+        const festBadge = day.isFestivalActive
+          ? `<span class="stage-pill" style="background:var(--pink-tint); color:var(--pink-full); margin-top:6px;">🎪 ${day.festival.name}</span>`
+          : `<div style="font-size:0.75rem; color:var(--text-muted); margin-top:5px;">추천 명소: ${day.toStation.spotName}</div>`;
+
+        const autoChip = day.leg.autoReason
+          ? `<span class="transport-note">${day.leg.autoReason}</span>`
+          : "";
+
+        const detailRow = day.leg.detail
+          ? `<div class="leg-detail-row">${day.leg.detail}</div>`
+          : "";
+
+        let modeControls = "";
+        if (day.fromStation.id !== day.toStation.id && day.availableModes?.length) {
+          if (day.availableModes.length === 1 && day.fromStation.isIsland !== day.toStation.isIsland) {
+            modeControls = `<div class="leg-mode-bar"><span class="leg-mode-fixed">✈️ 해상 구간 · 항공 전용 (자동차 불가)</span></div>`;
+          } else if (day.availableModes.length > 1) {
+            const buttonsHtml = day.availableModes
+              .map((m) => {
+                const isActive = m.modeType === day.leg.modeType;
+                return `<button type="button" class="leg-mode-btn ${isActive ? `active mode-${m.modeType}` : ""}" data-day-index="${idx}" data-mode="${m.modeType}">${m.chipLabel}</button>`;
+              })
+              .join("");
+            modeControls = `<div class="leg-mode-bar">${buttonsHtml}</div>`;
+          }
+        }
+
+        return `
+          <div class="day-card" data-station="${day.toStation.id}">
+            <div class="step-circle ${circleClass}">${day.dayNumber}</div>
+            <div>
+              <div style="font-size:0.74rem; font-weight:700; color:var(--text-muted);">DAY ${day.dayNumber} · ${day.dateLabel}</div>
+              <div style="font-size:1.02rem; font-weight:800; color:var(--green-deep); margin:2px 0 4px;">
+                ${day.fromStation.name} → ${day.toStation.name}
+              </div>
+              <div style="display:flex; align-items:center; gap:6px; flex-wrap:wrap;">
+                <span style="font-size:0.79rem; font-weight:600; color:var(--text-main);">
+                  ${day.leg.modeLabel} ${H.formatDurationMinutes(day.leg.minutes)}
+                </span>
+                <span class="stage-pill" style="background:${day.stage.bgTint}; color:${day.stage.textColor};">
+                  ${day.stage.label}
+                </span>
+                ${autoChip}
+              </div>
+              ${detailRow}
+              ${modeControls}
+              ${festBadge}
+            </div>
+          </div>
+        `;
+      })
+      .join("");
+
+    listEl.querySelectorAll(".day-card").forEach((card) => {
+      card.addEventListener("click", () => {
+        const st = DATA.stations.find((s) => s.id === card.dataset.station);
+        if (st && maps.trip) {
+          maps.trip.setView([st.lat, st.lon], 9, { animate: true });
+        }
+      });
+    });
+
+    listEl.querySelectorAll(".leg-mode-btn").forEach((btn) => {
+      btn.addEventListener("click", (e) => {
+        e.stopPropagation();
+        const dayIdx = Number(btn.dataset.dayIndex);
+        const modeType = btn.dataset.mode;
+        H.updateTripLegMode(DATA, state.currentTrip, dayIdx, modeType);
+        const updatedLeg = state.currentTrip.itinerary[dayIdx]?.leg;
+        renderTripResult(state.currentTrip, false);
+        if (updatedLeg) {
+          showToast(`DAY ${dayIdx + 1} 이동수단을 ${updatedLeg.modeLabel}(으)로 변경했습니다.`);
+        }
+      });
+    });
+
+    drawTripRouteOnTripMap(trip, shouldFitBounds);
+  }
+
   function buildAndRenderTrip(shouldNotify = false) {
     const originId = document.getElementById("tripOrigin").value;
     const startDate = document.getElementById("tripStartDate").value;
@@ -417,57 +615,10 @@
     });
     state.currentTrip = trip;
 
-    const nights = Math.max(0, trip.totalDays - 1);
-    const stayLabel = nights === 0 ? "당일치기" : `${nights}박 ${trip.totalDays}일`;
-    document.getElementById("tripHeaderSummary").textContent = `${H.formatKoreanDate(trip.startDate)} ~ ${H.formatKoreanDate(trip.endDate)} · ${stayLabel} · 총 이동 ${H.formatDurationMinutes(trip.totalMinutes)}`;
-
-    const listEl = document.getElementById("tripItineraryList");
-    if (!trip.itinerary.length) {
-      listEl.innerHTML = `<div style="padding:12px; color:var(--text-muted);">선택하신 조건에 맞는 일정을 생성할 수 없습니다.</div>`;
-      return;
-    }
-
-    listEl.innerHTML = trip.itinerary
-      .map((day, idx) => {
-        const circleClass = idx === 0 ? "day1" : idx === 1 ? "day2" : "";
-        const festBadge = day.isFestivalActive
-          ? `<span class="stage-pill" style="background:var(--pink-tint); color:var(--pink-full); margin-top:6px;">🎪 ${day.festival.name}</span>`
-          : `<div style="font-size:0.75rem; color:var(--text-muted); margin-top:5px;">추천 명소: ${day.toStation.spotName}</div>`;
-
-        return `
-          <div class="day-card" data-station="${day.toStation.id}">
-            <div class="step-circle ${circleClass}">${day.dayNumber}</div>
-            <div>
-              <div style="font-size:0.74rem; font-weight:700; color:var(--text-muted);">DAY ${day.dayNumber} · ${day.dateLabel}</div>
-              <div style="font-size:1.02rem; font-weight:800; color:var(--green-deep); margin:2px 0 4px;">
-                ${day.fromStation.name} → ${day.toStation.name}
-              </div>
-              <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
-                <span style="font-size:0.79rem; color:var(--text-muted);">
-                  ${day.leg.modeLabel} ${H.formatDurationMinutes(day.leg.minutes)}
-                </span>
-                <span class="stage-pill" style="background:${day.stage.bgTint}; color:${day.stage.textColor};">
-                  ${day.stage.label}
-                </span>
-              </div>
-              ${festBadge}
-            </div>
-          </div>
-        `;
-      })
-      .join("");
-
-    listEl.querySelectorAll(".day-card").forEach((card) => {
-      card.addEventListener("click", () => {
-        const st = DATA.stations.find((s) => s.id === card.dataset.station);
-        if (st && maps.trip) {
-          maps.trip.setView([st.lat, st.lon], 9, { animate: true });
-        }
-      });
-    });
-
-    drawTripRouteOnTripMap(trip, shouldNotify);
-    if (shouldNotify) {
+    renderTripResult(trip, shouldNotify);
+    if (shouldNotify && trip.itinerary.length) {
+      const nights = Math.max(0, trip.totalDays - 1);
+      const stayLabel = nights === 0 ? "당일치기" : `${nights}박 ${trip.totalDays}일`;
       showToast(`${trip.originStation.name} 출발 ${stayLabel} 로드트립 추천이 완료되었습니다.`);
     }
   }
@@ -808,6 +959,11 @@
     document.getElementById("tripOrigin").addEventListener("change", () => {
       renderDateUI();
       renderRecommendBanner();
+    });
+
+    document.getElementById("tripTransport").addEventListener("change", () => {
+      renderRecommendBanner();
+      buildAndRenderTrip(false);
     });
 
     document.getElementById("btnBuildTrip").addEventListener("click", () => buildAndRenderTrip(true));

@@ -439,6 +439,7 @@ SEOUL_OFFICIAL_HISTORY = [
 # 코레일 KTX / ITX-청춘 실제 공시 소요시간(분) — 주요 철도 직통/연계 구간
 VERIFIED_RAIL_MINUTES = {
     ("108", "119"): 34,   # 서울-수원 ITX/무궁화
+    ("108", "131"): 72,   # 서울-오송 KTX+청주연계
     ("108", "133"): 59,   # 서울-대전 KTX
     ("108", "143"): 108,  # 서울-동대구 KTX
     ("108", "159"): 158,  # 서울-부산 KTX
@@ -449,22 +450,102 @@ VERIFIED_RAIL_MINUTES = {
     ("108", "105"): 115,  # 서울-강릉 KTX-이음
     ("108", "101"): 72,   # 용산-춘천 ITX-청춘
     ("108", "168"): 168,  # 용산-여수EXPO KTX
+    ("119", "133"): 65,   # 수원-대전 ITX/새마을
+    ("119", "143"): 112,  # 수원-동대구 KTX
+    ("119", "159"): 162,  # 수원-부산 KTX
+    ("131", "133"): 35,   # 오송/청주-대전
     ("133", "143"): 45,   # 대전-동대구 KTX
     ("133", "159"): 100,  # 대전-부산 KTX
     ("133", "283"): 68,   # 대전-경주 KTX
     ("133", "146"): 68,   # 서대전-전주 ITX/무궁화
     ("133", "156"): 92,   # 서대전-광주송정 KTX/버스
     ("133", "155"): 122,  # 대전-창원 KTX
+    ("133", "168"): 125,  # 서대전-여수EXPO KTX
     ("143", "159"): 48,   # 동대구-부산 KTX
     ("143", "283"): 22,   # 동대구-경주 KTX
     ("143", "155"): 66,   # 동대구-창원/진해
-    ("146", "156"): 65,   # 전주-광주 고속버스/철도
-    ("146", "168"): 96,   # 전주-여수 KTX
-    ("159", "155"): 55,   # 부산-진해 광역/시외버스
+    ("146", "168"): 96,   # 전주-여수EXPO KTX
     ("159", "283"): 32,   # 부산-경주 KTX
-    ("119", "133"): 65,   # 수원-대전 ITX/새마을
-    ("131", "133"): 35,   # 오송/청주-대전
 }
+
+# 제주 ↔ 육지 국내선 항공 + 공항 접근 소요시간 (순수 비행시간 + 공항/시내 이동시간 기준)
+JEJU_CITY_ACCESS_MIN = 10   # 제주국제공항 ↔ 제주시내
+SEOGWIPO_ACCESS_MIN = 50    # 제주국제공항 ↔ 서귀포 시내
+
+VERIFIED_JEJU_FLIGHTS = {
+    "108": {"airport": "김포", "flightMin": 70, "accessMin": 35},
+    "119": {"airport": "김포", "flightMin": 70, "accessMin": 55},
+    "131": {"airport": "청주", "flightMin": 65, "accessMin": 25},
+    "133": {"airport": "청주", "flightMin": 65, "accessMin": 45},
+    "143": {"airport": "대구", "flightMin": 65, "accessMin": 25},
+    "283": {"airport": "포항경주", "flightMin": 65, "accessMin": 35},
+    "159": {"airport": "김해", "flightMin": 65, "accessMin": 30},
+    "155": {"airport": "김해", "flightMin": 65, "accessMin": 40},
+    "156": {"airport": "광주", "flightMin": 55, "accessMin": 25},
+    "146": {"airport": "군산", "flightMin": 55, "accessMin": 50},
+    "168": {"airport": "여수", "flightMin": 55, "accessMin": 25},
+    "101": {"airport": "원주", "flightMin": 70, "accessMin": 60},
+    "105": {"airport": "원주", "flightMin": 70, "accessMin": 75},
+}
+
+# 내륙 정기 국내선 직항 노선 (대구는 평시 정기 내륙 노선 미운항으로 제외)
+VERIFIED_DOMESTIC_FLIGHTS = {
+    ("108", "159"): {"fromAirport": "김포", "toAirport": "김해", "flightMin": 60, "accessMin": 65},
+    ("119", "159"): {"fromAirport": "김포", "toAirport": "김해", "flightMin": 60, "accessMin": 85},
+    ("108", "155"): {"fromAirport": "김포", "toAirport": "김해", "flightMin": 60, "accessMin": 75},
+    ("108", "168"): {"fromAirport": "김포", "toAirport": "여수", "flightMin": 55, "accessMin": 60},
+    ("108", "156"): {"fromAirport": "김포", "toAirport": "광주", "flightMin": 55, "accessMin": 60},
+    ("108", "283"): {"fromAirport": "김포", "toAirport": "포항경주", "flightMin": 55, "accessMin": 70},
+}
+
+# 전국 고속·시외버스 주요 공시 소요시간(분)
+VERIFIED_EXPRESS_BUS_MINUTES = {
+    ("108", "119"): 55,
+    ("108", "101"): 90,
+    ("108", "131"): 90,
+    ("108", "133"): 120,
+    ("108", "146"): 160,
+    ("108", "105"): 170,
+    ("108", "156"): 200,
+    ("108", "143"): 210,
+    ("108", "283"): 210,
+    ("108", "155"): 235,
+    ("108", "159"): 240,
+    ("108", "168"): 255,
+    ("184", "189"): 65,
+    ("159", "155"): 60,
+    ("159", "283"): 55,
+    ("159", "143"): 75,
+    ("143", "283"): 55,
+    ("146", "156"): 70,
+    ("133", "131"): 45,
+    ("133", "146"): 65,
+    ("133", "143"): 115,
+    ("133", "156"): 130,
+    ("156", "168"): 100,
+}
+
+
+def haversine_km(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
+    """두 위경도 좌표 간 대원 거리(km)를 계산한다."""
+    rad = math.pi / 180.0
+    dlat = (lat2 - lat1) * rad
+    dlon = (lon2 - lon1) * rad
+    a = (
+        math.sin(dlat / 2.0) ** 2
+        + math.cos(lat1 * rad) * math.cos(lat2 * rad) * (math.sin(dlon / 2.0) ** 2)
+    )
+    return round(2.0 * 6371.0 * math.asin(min(1.0, math.sqrt(a))), 1)
+
+
+def format_korean_duration(mins: int) -> str:
+    """분 단위 시간을 한국어 시·분 표기로 변환한다."""
+    h, m = divmod(int(round(mins)), 60)
+    if h == 0:
+        return f"{m}분"
+    if m == 0:
+        return f"{h}시간"
+    return f"{h}시간 {m}분"
 
 
 def fetch_json(url: str, retries: int = 3) -> dict:
@@ -691,55 +772,154 @@ def fetch_osrm_matrix() -> dict:
     url = f"https://router.project-osrm.org/table/v1/driving/{coords}?annotations=duration,distance"
     print("Fetching real OSRM driving duration & distance matrix for 15 stations...")
     raw = fetch_json(url)
+
     durations_min = []
     distances_km = []
     for i, row in enumerate(raw["durations"]):
         d_row = []
         k_row = []
         for j, val in enumerate(row):
-            d_min = round(val / 60.0) if val is not None else None
-            k_km = round(raw["distances"][i][j] / 1000.0, 1) if raw["distances"][i][j] is not None else None
-            d_row.append(d_min)
-            k_row.append(k_km)
+            if STATIONS[i]["isIsland"] != STATIONS[j]["isIsland"]:
+                # 육지 ↔ 제주 해상 구간은 도로(자동차) 이동 불가
+                d_row.append(None)
+                k_row.append(None)
+            elif i == j:
+                d_row.append(0)
+                k_row.append(0.0)
+            else:
+                d_min = round(val / 60.0) if val is not None else None
+                k_km = round(raw["distances"][i][j] / 1000.0, 1) if raw["distances"][i][j] is not None else None
+                d_row.append(d_min)
+                k_row.append(k_km)
         durations_min.append(d_row)
         distances_km.append(k_row)
 
-    # 대중교통(KTX + 시외버스 연계) 소요시간 행렬 구성
+    # 복합 교통수단 행렬 구성 (고속버스 · KTX 철도 · 국내선 항공)
     id_list = [s["id"] for s in STATIONS]
-    transit_min = []
-    transit_mode = []
+    bus_min, bus_mode = [], []
+    rail_min, rail_mode = [], []
+    flight_min, flight_mode, flight_detail, flight_km = [], [], [], []
+    transit_min, transit_mode = [], []
+
     for i, sid_a in enumerate(id_list):
-        t_row = []
-        m_row = []
+        b_m_row, b_l_row = [], []
+        r_m_row, r_l_row = [], []
+        f_m_row, f_l_row, f_d_row, f_k_row = [], [], [], []
+        t_m_row, t_l_row = [], []
+
         for j, sid_b in enumerate(id_list):
             if i == j:
-                t_row.append(0)
-                m_row.append("동일지점")
+                b_m_row.append(0)
+                b_l_row.append("동일지점")
+                r_m_row.append(None)
+                r_l_row.append(None)
+                f_m_row.append(None)
+                f_l_row.append(None)
+                f_d_row.append(None)
+                f_k_row.append(0.0)
+                t_m_row.append(0)
+                t_l_row.append("동일지점")
                 continue
+
+            st_a = STATIONS[i]
+            st_b = STATIONS[j]
             key = (sid_a, sid_b)
             rev_key = (sid_b, sid_a)
-            if STATIONS[i]["isIsland"] != STATIONS[j]["isIsland"]:
-                # 육지 ↔ 제주: 국내선 항공 + 공항 이동 포함 약 135~165분
-                t_row.append(145)
-                m_row.append("국내선 항공+연계버스")
-            elif key in VERIFIED_RAIL_MINUTES:
-                t_row.append(VERIFIED_RAIL_MINUTES[key])
-                m_row.append("KTX·ITX 철도")
-            elif rev_key in VERIFIED_RAIL_MINUTES:
-                t_row.append(VERIFIED_RAIL_MINUTES[rev_key])
-                m_row.append("KTX·ITX 철도")
+
+            if st_a["isIsland"] != st_b["isIsland"]:
+                # 육지 ↔ 제주/서귀포: 국내선 항공 전용
+                mainland_id = sid_b if st_a["isIsland"] else sid_a
+                island_id = sid_a if st_a["isIsland"] else sid_b
+                info = VERIFIED_JEJU_FLIGHTS[mainland_id]
+                island_access = SEOGWIPO_ACCESS_MIN if island_id == "189" else JEJU_CITY_ACCESS_MIN
+                total_min = info["flightMin"] + info["accessMin"] + island_access
+                transfer_min = info["accessMin"] + island_access
+                dep_arr = f"제주→{info['airport']}" if st_a["isIsland"] else f"{info['airport']}→제주"
+                transfer_label = "공항·서귀포 이동" if island_id == "189" else "공항 이동"
+
+                b_m_row.append(None)
+                b_l_row.append(None)
+                r_m_row.append(None)
+                r_l_row.append(None)
+                f_m_row.append(total_min)
+                f_l_row.append(f"✈️ 비행기 ({dep_arr})")
+                f_d_row.append(
+                    f"비행 {format_korean_duration(info['flightMin'])} + {transfer_label} {format_korean_duration(transfer_min)}"
+                )
+                f_k_row.append(haversine_km(st_a["lat"], st_a["lon"], st_b["lat"], st_b["lon"]))
+                t_m_row.append(total_min)
+                t_l_row.append(f"✈️ 비행기 ({dep_arr})")
+                continue
+
+            # 동일 권역 (육지↔육지 또는 제주↔서귀포)
+            bus_val = VERIFIED_EXPRESS_BUS_MINUTES.get(key) or VERIFIED_EXPRESS_BUS_MINUTES.get(rev_key)
+            if bus_val is None:
+                drive_m = durations_min[i][j] or 150
+                bus_val = round(drive_m * 1.15 + 15)
+            bus_lbl = "🚌 공항리무진·급행버스" if st_a["isIsland"] else "🚌 고속·시외버스"
+            b_m_row.append(bus_val)
+            b_l_row.append(bus_lbl)
+
+            rail_val = VERIFIED_RAIL_MINUTES.get(key) or VERIFIED_RAIL_MINUTES.get(rev_key)
+            if rail_val is not None:
+                r_m_row.append(rail_val)
+                r_l_row.append("🚄 KTX·ITX")
+                t_m_row.append(rail_val)
+                t_l_row.append("🚄 KTX·ITX")
             else:
-                drive_m = durations_min[i][j] or 180
-                # 고속·시외버스 실소요 환산 (도로주행 * 1.18 + 대기/환승 18분)
-                t_row.append(round(drive_m * 1.18 + 18))
-                m_row.append("고속·시외버스")
-        transit_min.append(t_row)
-        transit_mode.append(m_row)
+                r_m_row.append(None)
+                r_l_row.append(None)
+                t_m_row.append(bus_val)
+                t_l_row.append(bus_lbl)
+
+            if key in VERIFIED_DOMESTIC_FLIGHTS:
+                f_info = VERIFIED_DOMESTIC_FLIGHTS[key]
+                dep, arr = f_info["fromAirport"], f_info["toAirport"]
+            elif rev_key in VERIFIED_DOMESTIC_FLIGHTS:
+                f_info = VERIFIED_DOMESTIC_FLIGHTS[rev_key]
+                dep, arr = f_info["toAirport"], f_info["fromAirport"]
+            else:
+                f_info = None
+                dep, arr = None, None
+
+            if f_info is not None:
+                f_total = f_info["flightMin"] + f_info["accessMin"]
+                f_m_row.append(f_total)
+                f_l_row.append(f"✈️ 비행기 ({dep}→{arr})")
+                f_d_row.append(
+                    f"비행 {format_korean_duration(f_info['flightMin'])} + 공항 이동 {format_korean_duration(f_info['accessMin'])}"
+                )
+                f_k_row.append(haversine_km(st_a["lat"], st_a["lon"], st_b["lat"], st_b["lon"]))
+            else:
+                f_m_row.append(None)
+                f_l_row.append(None)
+                f_d_row.append(None)
+                f_k_row.append(None)
+
+        bus_min.append(b_m_row)
+        bus_mode.append(b_l_row)
+        rail_min.append(r_m_row)
+        rail_mode.append(r_l_row)
+        flight_min.append(f_m_row)
+        flight_mode.append(f_l_row)
+        flight_detail.append(f_d_row)
+        flight_km.append(f_k_row)
+        transit_min.append(t_m_row)
+        transit_mode.append(t_l_row)
 
     return {
+        "multimodalVersion": 2,
         "stationIds": id_list,
         "drivingMinutes": durations_min,
         "drivingKm": distances_km,
+        "busMinutes": bus_min,
+        "busModes": bus_mode,
+        "railMinutes": rail_min,
+        "railModes": rail_mode,
+        "flightMinutes": flight_min,
+        "flightModes": flight_mode,
+        "flightDetails": flight_detail,
+        "flightKm": flight_km,
         "transitMinutes": transit_min,
         "transitModes": transit_mode,
     }
@@ -854,7 +1034,7 @@ def main() -> None:
         "sources": {
             "weather": "Open-Meteo Historical Weather Archive API (ERA5/KMA grid, Tmax/Tmin/Tmean/Precipitation/FAO-ET0)",
             "phenology": "기상청 생물계절관측 서울(108) 및 전국 ASOS 표준목 평년·실측 개화일",
-            "routing": "OSRM (Open Source Routing Machine) Driving Table API + 코레일 KTX 공시 소요시간",
+            "routing": "OSRM Driving Table API + 국내선 항공·고속버스·코레일 KTX 공시 소요시간",
             "hydrology": "Shi et al. (2014) Prunus yedoensis GDD (T_base=1.2°C, 2/7 누적) & Viessman & Lewis (1996) 물수지식 P=ET+Q+ΔS",
             "flood": "WAMIS 국가수자원관리종합정보시스템 및 홍수통제소 특보 기준 수위",
         },
