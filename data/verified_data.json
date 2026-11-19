@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-11-18T11:45:39.722708+00:00",
+  "generatedAt": "2026-11-19T02:12:44.829133+00:00",
   "sources": {
     "weather": "Open-Meteo Historical Weather Archive API (ERA5/KMA grid, Tmax/Tmin/Tmean/Precipitation/FAO-ET0)",
     "phenology": "기상청 생물계절관측 서울(108) 및 전국 ASOS 표준목 평년·실측 개화일",
