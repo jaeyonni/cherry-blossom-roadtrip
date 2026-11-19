@@ -189,10 +189,11 @@
   }
 
   /**
-   * 단일 관측지점에 대해 모델 파라미터(tBase, tempShift, precipScalePct, waterBalanceEnabled, reportOffsetDays)를 적용해
-   * 2026-02-01 ~ 2026-04-25 전체 일별 GDD, 물수지, 예측 개화일/만개일/종료일을 재계산한다.
+   * 단일 관측지점에 대해 모델 파라미터(year, tBase, tempShift, precipScalePct, waterBalanceEnabled, reportOffsetDays)를 적용해
+   * 해당 연도 2/1 ~ 4/25 전체 일별 GDD, 물수지, 예측 개화일/만개일/종료일을 재계산한다.
    */
   function simulateStation(station, rawDailySeries, options = {}) {
+    const year = Number(options.year || rawDailySeries?.[0]?.date?.slice(0, 4) || 2026);
     const tBase = options.tBase ?? 1.2;
     const tempShift = options.tempShift ?? 0.0;
     const precipScale = 1 + (options.precipScalePct ?? 0) / 100;
@@ -203,17 +204,20 @@
     const endOffsetDays = options.endOffsetDays ?? 13;
 
     // 순수 열적 기준 임계값 역산:
-    // 관측 2026 개화일 기준 calibratedThresholdGdd에서 관측 ΔS 효과를 분리해 thermalBaseThreshold 산출
+    // 2026년은 2026 단일 캘리브레이션, 2027년+는 2023~2026 4개년 다년 보정 열적 임계값 적용
     const obsDeltaS = station.obs2026CumDeltaS ?? DEFAULT_BASELINE_DELTA_S;
-    const calThreshold = useLiteratureThreshold
-      ? station.referenceThresholdGdd || 371.5
-      : station.calibratedThresholdGdd;
-
-    const thermalBaseThreshold = useLiteratureThreshold
-      ? calThreshold
-      : calThreshold - WATER_BALANCE_COUPLING_K * (obsDeltaS - DEFAULT_BASELINE_DELTA_S);
+    let thermalBaseThreshold;
+    if (useLiteratureThreshold) {
+      thermalBaseThreshold = station.referenceThresholdGdd || 371.5;
+    } else if (year >= 2027 && station.multiYearThermalThresholdGdd != null) {
+      thermalBaseThreshold = station.multiYearThermalThresholdGdd;
+    } else {
+      thermalBaseThreshold =
+        station.calibratedThresholdGdd - WATER_BALANCE_COUPLING_K * (obsDeltaS - DEFAULT_BASELINE_DELTA_S);
+    }
 
     const round2 = (x) => Math.round(x * 100) / 100;
+    const startIso = `${year}-02-07`;
 
     let cumGdd = 0;
     let cumP = 0;
@@ -238,7 +242,7 @@
       const dsDaily = round2(pAdj - etAdj - qAdj);
 
       let dailyGdd = 0;
-      if (dStr >= "2026-02-07") {
+      if (dStr >= startIso) {
         dailyGdd = Math.max(0, tMeanHL - tBase);
         cumGdd = round2(cumGdd + dailyGdd);
         cumP = round2(cumP + pAdj);
@@ -252,12 +256,13 @@
         : 0;
       const effectiveThreshold = Math.max(80, thermalBaseThreshold + wbAdjustmentGdd);
 
-      if (!predictedOpenDate && dStr >= "2026-02-07" && cumGdd >= effectiveThreshold - 0.05) {
+      if (!predictedOpenDate && dStr >= startIso && cumGdd >= effectiveThreshold - 0.05) {
         predictedOpenDate = dStr;
       }
 
       series.push({
         date: dStr,
+        dataType: row.dataType || (year <= 2026 ? "observed" : "climatology"),
         tMax: Number(tMaxAdj.toFixed(1)),
         tMin: Number(tMinAdj.toFixed(1)),
         tMean: Number(tMeanObsAdj.toFixed(1)),
@@ -277,7 +282,7 @@
     }
 
     if (!predictedOpenDate) {
-      predictedOpenDate = "2026-04-22";
+      predictedOpenDate = `${year}-04-22`;
     }
 
     // 사용자 커뮤니티 현장 제보 보정(reportOffsetDays) 반영
@@ -286,6 +291,7 @@
     const finalEndDate = addDaysIso(finalOpenDate, endOffsetDays);
 
     return {
+      year,
       station,
       series,
       byDate: Object.fromEntries(series.map((r) => [r.date, r])),
@@ -293,9 +299,11 @@
       predictedOpenDate: finalOpenDate,
       predictedFullDate: finalFullDate,
       predictedEndDate: finalEndDate,
-      normalBloomDate: `2026-${station.normalBloom}`,
+      normalBloomDate: `${year}-${station.normalBloom}`,
       obsBloom2026Date: `2026-${station.obsBloom2026}`,
-      daysVsNormal: diffDaysIso(`2026-${station.normalBloom}`, finalOpenDate),
+      daysVsNormal: diffDaysIso(`${year}-${station.normalBloom}`, finalOpenDate),
+      daysVs2026: diffDaysIso(`${year}-${station.obsBloom2026}`, finalOpenDate),
+      forecastMeta: year >= 2027 ? station.forecast2027Meta || null : null,
     };
   }
 
@@ -326,12 +334,19 @@
    * 전국 모든 관측소에 대해 시뮬레이션 수행 및 특정 날짜 스냅샷 생성
    */
   function evaluateAllStations(data, targetDate, options = {}) {
+    const year = Number(options.year || targetDate?.slice(0, 4) || data.defaultYear || 2027);
+    const yearSeriesMap =
+      data.dailyByYear?.[String(year)] ||
+      (year === 2027 ? data.daily2027 : data.daily2026) ||
+      data.daily2026;
     const reportsByStation = options.reportsByStation || {};
     const results = [];
     for (const st of data.stations) {
       const reportOffsetDays = reportsByStation[st.id]?.offsetDays || 0;
-      const sim = simulateStation(st, data.daily2026[st.id], {
+      const rawSeries = yearSeriesMap?.[st.id] || data.daily2026[st.id];
+      const sim = simulateStation(st, rawSeries, {
         ...options,
+        year,
         reportOffsetDays,
       });
       const stage = getStageOnDate(sim, targetDate);
@@ -716,6 +731,7 @@
     } = params;
 
     const totalDays = Math.max(1, Math.min(7, diffDaysIso(startDate, endDate) + 1));
+    const tripYear = Number(startDate?.slice(0, 4) || 2027);
     const evalMap = Object.fromEntries(evaluations.map((e) => [e.station.id, e]));
     const originStation = data.stations.find((s) => s.id === originId) || data.stations[0];
 
@@ -770,7 +786,12 @@
         const stStage = getStageOnDate(ev, currentDate);
         const leg = getTravelLeg(data.routingMatrix, prevStationId, st.id, transportMode, data.stations);
         const fest = st.festival;
-        const isFestivalActive = fest && currentDate >= fest.start && currentDate <= fest.end;
+        const isFestivalActive = fest
+          ? tripYear === 2026
+            ? currentDate >= fest.start && currentDate <= fest.end
+            : currentDate >= ev.predictedOpenDate && currentDate <= addDaysIso(ev.predictedFullDate, 2)
+          : false;
+        const isFestivalEstimated = Boolean(isFestivalActive && tripYear >= 2027);
 
         let score = 0;
         if (stStage.key === "full") score += 35;
@@ -793,7 +814,7 @@
           score -= 45;
         }
 
-        return { ev, stStage, leg, isFestivalActive, score };
+        return { ev, stStage, leg, isFestivalActive, isFestivalEstimated, score };
       });
 
       scored.sort((a, b) => b.score - a.score);
@@ -818,6 +839,7 @@
         availableModes: getAvailableModesForPair(data, prevStation.id, picked.ev.station.id),
         userOverridden: false,
         isFestivalActive: picked.isFestivalActive,
+        isFestivalEstimated: picked.isFestivalEstimated,
         festival: picked.ev.station.festival,
         dayMetrics: picked.ev.byDate[currentDate] || picked.ev.dayMetrics,
         fallbackNotice,
@@ -873,22 +895,31 @@
    * - WAMIS 인근 하천 관측소 공식 홍수주의보 기준 수위 정보 병기
    */
   function evaluateWeatherHazards(data, targetDate) {
+    const year = Number(targetDate?.slice(0, 4) || 2026);
+    const yearSeriesMap =
+      data.dailyByYear?.[String(year)] ||
+      (year === 2027 ? data.daily2027 : data.daily2026) ||
+      data.daily2026;
     const alerts = [];
     for (const st of data.stations) {
-      const series = data.daily2026[st.id];
+      const series = yearSeriesMap?.[st.id] || data.daily2026[st.id];
       const idx = series.findIndex((r) => r.date === targetDate);
       const dayRow = idx >= 0 ? series[idx] : series[series.length - 1];
       const prevRow = idx > 0 ? series[idx - 1] : dayRow;
       const rainTodayMm = Number((dayRow?.precip || 0).toFixed(1));
       const rain2DayMm = Number((rainTodayMm + (prevRow?.precip || 0)).toFixed(1));
+      const dataType = dayRow?.dataType || (year <= 2026 ? "observed" : "climatology");
+      const isLiveWeather = dataType === "observed" || dataType === "forecast16d";
 
-      const activeAlert = rainTodayMm >= 30.0 || rain2DayMm >= 40.0;
+      const activeAlert = isLiveWeather && (rainTodayMm >= 30.0 || rain2DayMm >= 40.0);
 
       alerts.push({
         station: st,
         date: targetDate,
         rainTodayMm,
         rain2DayMm,
+        dataType,
+        isLiveWeather,
         activeAlert,
         alertTitle: activeAlert
           ? `강수 집중 주의 · ${st.name} (일 ${rainTodayMm}mm / 48h ${rain2DayMm}mm)`

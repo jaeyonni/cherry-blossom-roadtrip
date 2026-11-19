@@ -20,14 +20,20 @@ import json
 import math
 import statistics
 import time
+import urllib.error
 import urllib.parse
 import urllib.request
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
 ROOT_DIR = Path(__file__).resolve().parent.parent
 DATA_DIR = ROOT_DIR / "data"
 DATA_DIR.mkdir(parents=True, exist_ok=True)
+
+DEFAULT_BASELINE_DELTA_S = -40.0
+WATER_BALANCE_COUPLING_K = 0.22
+FORECAST_YEAR = 2027
+CLIMATOLOGY_CACHE_PATH = DATA_DIR / "climatology_2017_2026.json"
 
 # 기상청 공식 ASOS 지점 메타데이터 + 1991~2020 평년 개화일 + 최근 실측 개화일 + 2026 실제 축제 일정
 STATIONS = [
@@ -548,7 +554,7 @@ def format_korean_duration(mins: int) -> str:
     return f"{h}시간 {m}분"
 
 
-def fetch_json(url: str, retries: int = 3) -> dict:
+def fetch_json(url: str, retries: int = 4) -> dict:
     last_err = None
     for attempt in range(retries):
         try:
@@ -558,9 +564,21 @@ def fetch_json(url: str, retries: int = 3) -> dict:
             )
             with urllib.request.urlopen(req, timeout=30) as resp:
                 return json.loads(resp.read().decode("utf-8"))
+        except urllib.error.HTTPError as err:
+            last_err = err
+            if err.code == 429:
+                retry_after = int(err.headers.get("Retry-After") or 0)
+                body = err.read().decode("utf-8", errors="replace")
+                if retry_after > 90:
+                    raise RuntimeError(f"HTTP 429 (Retry-After={retry_after}s): {body}") from err
+                wait_sec = max(retry_after + 2, 10 * (attempt + 1))
+            else:
+                wait_sec = 1.5 * (attempt + 1)
+            print(f"HTTP {err.code} on attempt {attempt + 1}/{retries}; retrying in {wait_sec}s...")
+            time.sleep(wait_sec)
         except Exception as err:
             last_err = err
-            time.sleep(1.2 * (attempt + 1))
+            time.sleep(1.5 * (attempt + 1))
     raise RuntimeError(f"Failed to fetch {url}: {last_err}")
 
 
@@ -573,6 +591,7 @@ def compute_gdd_series(
     daily: dict,
     t_base: float = 1.2,
     start_mmdd: str = "02-07",
+    data_types: list[str] | None = None,
 ) -> list[dict]:
     times = daily["time"]
     tmax_arr = daily["temperature_2m_max"]
@@ -633,30 +652,95 @@ def compute_gdd_series(
                 "cumEt0": cum_et,
                 "cumRunoffQ": cum_q,
                 "cumDeltaS": cum_ds,
+                "dataType": data_types[i] if data_types is not None else "observed",
             }
         )
     return rows
 
 
-def fetch_spring_2026_all_stations() -> dict[str, list[dict]]:
+def fetch_spring_climatology_2017_2026() -> dict[str, dict[int, list[dict]]]:
+    if CLIMATOLOGY_CACHE_PATH.exists():
+        raw_cache = json.loads(CLIMATOLOGY_CACHE_PATH.read_text(encoding="utf-8"))
+        print(f"Loaded immutable 2017-2026 spring climatology cache ({CLIMATOLOGY_CACHE_PATH.name})")
+        return {
+            sid: {int(yr): rows for yr, rows in ymap.items()}
+            for sid, ymap in raw_cache.items()
+        }
+
+    lat_str = ",".join(str(s["lat"]) for s in STATIONS)
+    lon_str = ",".join(str(s["lon"]) for s in STATIONS)
+    result: dict[str, dict[int, list[dict]]] = {s["id"]: {} for s in STATIONS}
+
+    print(f"Fetching 2017-2026 Feb-Apr windows (10-year climatology) for {len(STATIONS)} ASOS stations...")
+    for yr in range(2017, 2027):
+        url = (
+            "https://archive-api.open-meteo.com/v1/archive"
+            f"?latitude={lat_str}&longitude={lon_str}"
+            f"&start_date={yr}-02-01&end_date={yr}-04-25"
+            "&daily=temperature_2m_max,temperature_2m_min,temperature_2m_mean,precipitation_sum,et0_fao_evapotranspiration"
+            "&timezone=Asia%2FSeoul"
+        )
+        raw = fetch_json(url)
+        items = raw if isinstance(raw, list) else [raw]
+        for station, item in zip(STATIONS, items):
+            result[station["id"]][yr] = compute_gdd_series(item["daily"], t_base=1.2, start_mmdd="02-07")
+        time.sleep(0.4)
+
+    with CLIMATOLOGY_CACHE_PATH.open("w", encoding="utf-8") as f:
+        json.dump(result, f, ensure_ascii=False, separators=(",", ":"))
+    print(f"Saved immutable climatology cache: {CLIMATOLOGY_CACHE_PATH.name}")
+    return result
+
+
+def fetch_live_2027_window_if_in_season() -> dict[str, dict[str, dict]]:
+    today = date.today()
+    if not (date(FORECAST_YEAR, 1, 16) <= today <= date(FORECAST_YEAR, 5, 10)):
+        return {}
+
     lat_str = ",".join(str(s["lat"]) for s in STATIONS)
     lon_str = ",".join(str(s["lon"]) for s in STATIONS)
     url = (
-        "https://archive-api.open-meteo.com/v1/archive"
+        "https://api.open-meteo.com/v1/forecast"
         f"?latitude={lat_str}&longitude={lon_str}"
-        "&start_date=2026-02-01&end_date=2026-04-25"
         "&daily=temperature_2m_max,temperature_2m_min,temperature_2m_mean,precipitation_sum,et0_fao_evapotranspiration"
-        "&timezone=Asia%2FSeoul"
+        "&past_days=90&forecast_days=16&timezone=Asia%2FSeoul"
     )
-    print(f"Fetching 2026 spring archive for {len(STATIONS)} ASOS stations...")
-    raw = fetch_json(url)
-    # Open-Meteo returns a list when multiple coordinates are requested
+    print(f"Fetching live {FORECAST_YEAR} observations + 16-day forecast from Open-Meteo Forecast API...")
+    try:
+        raw = fetch_json(url)
+    except Exception as err:
+        print(f"Warning: live {FORECAST_YEAR} forecast fetch failed ({err}); falling back to 10-year ensemble.")
+        return {}
+
     items = raw if isinstance(raw, list) else [raw]
-    result = {}
+    today_iso = today.isoformat()
+    start_win = f"{FORECAST_YEAR}-02-01"
+    end_win = f"{FORECAST_YEAR}-04-25"
+    live_map: dict[str, dict[str, dict]] = {}
+
     for station, item in zip(STATIONS, items):
-        series = compute_gdd_series(item["daily"], t_base=1.2, start_mmdd="02-07")
-        result[station["id"]] = series
-    return result
+        daily = item.get("daily", {})
+        times = daily.get("time", [])
+        st_rows: dict[str, dict] = {}
+        for i, d_str in enumerate(times):
+            if start_win <= d_str <= end_win:
+                tx = daily["temperature_2m_max"][i]
+                tn = daily["temperature_2m_min"][i]
+                tm = daily["temperature_2m_mean"][i]
+                pr = daily["precipitation_sum"][i]
+                et = daily["et0_fao_evapotranspiration"][i]
+                if tx is None or tn is None:
+                    continue
+                st_rows[d_str] = {
+                    "tMax": float(tx),
+                    "tMin": float(tn),
+                    "tMean": float(tm) if tm is not None else (float(tx) + float(tn)) / 2.0,
+                    "precip": float(pr) if pr is not None else 0.0,
+                    "et0": float(et) if et is not None else 1.5,
+                    "dataType": "observed" if d_str < today_iso else "forecast16d",
+                }
+        live_map[station["id"]] = st_rows
+    return live_map
 
 
 def fetch_seoul_longterm_history() -> dict:
@@ -669,7 +753,7 @@ def fetch_seoul_longterm_history() -> dict:
         "&daily=temperature_2m_max,temperature_2m_min,temperature_2m_mean,precipitation_sum,et0_fao_evapotranspiration"
         "&timezone=Asia%2FSeoul"
     )
-    raw_long = fetch_json(url_long)
+    raw_long = fetch_json(url_long, retries=2)
     daily = raw_long["daily"]
 
     # 연도별 3월 평균기온 및 2~4월 시계열 인덱싱
@@ -925,23 +1009,198 @@ def fetch_osrm_matrix() -> dict:
     }
 
 
-def calibrate_stations(stations: list[dict], spring_2026: dict[str, list[dict]]) -> list[dict]:
+def calibrate_stations(
+    stations: list[dict],
+    climatology_by_year: dict[str, dict[int, list[dict]]],
+) -> list[dict]:
     enriched = []
+    cal_years = (
+        (2023, "obsBloom2023"),
+        (2024, "obsBloom2024"),
+        (2025, "obsBloom2025"),
+        (2026, "obsBloom2026"),
+    )
     for s in stations:
         sid = s["id"]
-        series = spring_2026[sid]
+        years_map = climatology_by_year[sid]
+        series_2026 = years_map[2026]
         obs_date_2026 = f"2026-{s['obsBloom2026']}"
-        obs_row = next((r for r in series if r["date"] == obs_date_2026), None)
+        obs_row = next((r for r in series_2026 if r["date"] == obs_date_2026), None)
         calibrated_gdd = obs_row["cumGdd"] if obs_row else 371.5
+
+        thermal_bases = []
+        for yr, key in cal_years:
+            target_iso = f"{yr}-{s[key]}"
+            row = next((r for r in years_map[yr] if r["date"] == target_iso), None)
+            if row is not None:
+                thermal = row["cumGdd"] - WATER_BALANCE_COUPLING_K * (
+                    row["cumDeltaS"] - DEFAULT_BASELINE_DELTA_S
+                )
+                thermal_bases.append(thermal)
+
+        multi_thermal = (
+            round(statistics.mean(thermal_bases), 2)
+            if thermal_bases
+            else round(
+                calibrated_gdd
+                - WATER_BALANCE_COUPLING_K
+                * ((obs_row["cumDeltaS"] if obs_row else DEFAULT_BASELINE_DELTA_S) - DEFAULT_BASELINE_DELTA_S),
+                2,
+            )
+        )
 
         # 참고문헌 Shi et al. (2014) 동아시아 기준(371.5°C·day)과 기상청 관측 역산 임계값 비교
         s_copy = dict(s)
         s_copy["calibratedThresholdGdd"] = round(calibrated_gdd, 2)
+        s_copy["multiYearThermalThresholdGdd"] = multi_thermal
         s_copy["referenceThresholdGdd"] = 371.5
         s_copy["obs2026CumPrecip"] = obs_row["cumPrecip"] if obs_row else 0.0
         s_copy["obs2026CumDeltaS"] = obs_row["cumDeltaS"] if obs_row else 0.0
         enriched.append(s_copy)
     return enriched
+
+
+def build_2027_forecast_bundle(
+    calibrated_stations: list[dict],
+    climatology_by_year: dict[str, dict[int, list[dict]]],
+    warming_per_decade: float,
+    live_2027: dict[str, dict[str, dict]],
+) -> dict[str, list[dict]]:
+    cal_calendar = []
+    cur = date(FORECAST_YEAR, 2, 1)
+    end_dt = date(FORECAST_YEAR, 4, 25)
+    while cur <= end_dt:
+        cal_calendar.append(cur.isoformat())
+        cur += timedelta(days=1)
+
+    base_trend_shift = round((warming_per_decade / 10.0) * (FORECAST_YEAR - 2021.5), 2)
+    daily_2027: dict[str, list[dict]] = {}
+
+    for s in calibrated_stations:
+        sid = s["id"]
+        years_map = climatology_by_year[sid]
+        thermal_base = s["multiYearThermalThresholdGdd"]
+
+        # A. 2017~2026 10개년 실측 기상·물수지 앙상블 (각 연도 실측 P, ET0 + 온난화 추세 반영)
+        bloom_mmdd_list: list[str] = []
+        by_year_mmdd: dict[int, dict[str, dict]] = {}
+        for yr, rows in sorted(years_map.items()):
+            by_mmdd = {r["date"][5:]: r for r in rows}
+            by_year_mmdd[yr] = by_mmdd
+            shift = (warming_per_decade / 10.0) * (FORECAST_YEAR - yr)
+            cum_gdd = 0.0
+            cum_ds = 0.0
+            picked_mmdd = None
+            for cal_iso in cal_calendar:
+                mmdd = cal_iso[5:]
+                src = by_mmdd.get(mmdd)
+                if src is None:
+                    continue
+                tmean_hl = round(((src["tMax"] + shift) + (src["tMin"] + shift)) / 2.0, 2)
+                if mmdd >= "02-07":
+                    cum_gdd = round(cum_gdd + max(0.0, tmean_hl - 1.2), 2)
+                    cum_ds = round(cum_ds + src["deltaS"], 2)
+                    eff_thr = max(
+                        80.0,
+                        thermal_base + WATER_BALANCE_COUPLING_K * (cum_ds - DEFAULT_BASELINE_DELTA_S),
+                    )
+                    if picked_mmdd is None and cum_gdd >= eff_thr - 0.05:
+                        picked_mmdd = mmdd
+            bloom_mmdd_list.append(picked_mmdd or "04-22")
+
+        bloom_mmdd_list.sort()
+        n_ens = len(bloom_mmdd_list)
+        earliest = bloom_mmdd_list[0]
+        p25 = bloom_mmdd_list[n_ens // 4]
+        median = bloom_mmdd_list[n_ens // 2]
+        p75 = bloom_mmdd_list[(3 * n_ens) // 4]
+        latest = bloom_mmdd_list[-1]
+
+        # B. 2027년 대표 일별 시계열 (실측/16일 예보 우선 병합, 미관측일은 10년 기후평균 + 온난화 보정)
+        live_rows = live_2027.get(sid, {})
+        daily_input = {
+            "time": [],
+            "temperature_2m_max": [],
+            "temperature_2m_min": [],
+            "temperature_2m_mean": [],
+            "precipitation_sum": [],
+            "et0_fao_evapotranspiration": [],
+        }
+        data_types: list[str] = []
+        obs_cnt = 0
+        fc16_cnt = 0
+        clim_cnt = 0
+
+        for cal_iso in cal_calendar:
+            mmdd = cal_iso[5:]
+            daily_input["time"].append(cal_iso)
+            if cal_iso in live_rows:
+                lr = live_rows[cal_iso]
+                dt_kind = lr["dataType"]
+                if dt_kind == "observed":
+                    obs_cnt += 1
+                else:
+                    fc16_cnt += 1
+                data_types.append(dt_kind)
+                daily_input["temperature_2m_max"].append(round(lr["tMax"], 2))
+                daily_input["temperature_2m_min"].append(round(lr["tMin"], 2))
+                daily_input["temperature_2m_mean"].append(round(lr["tMean"], 2))
+                daily_input["precipitation_sum"].append(round(lr["precip"], 2))
+                daily_input["et0_fao_evapotranspiration"].append(round(lr["et0"], 2))
+            else:
+                clim_cnt += 1
+                data_types.append("climatology")
+                samples = [by_year_mmdd[yr][mmdd] for yr in sorted(by_year_mmdd) if mmdd in by_year_mmdd[yr]]
+                avg_tx = round(statistics.mean(r["tMax"] for r in samples) + base_trend_shift, 2)
+                avg_tn = round(statistics.mean(r["tMin"] for r in samples) + base_trend_shift, 2)
+                avg_tm = round(statistics.mean(r["tMean"] for r in samples) + base_trend_shift, 2)
+                avg_pr = round(statistics.mean(r["precip"] for r in samples), 2)
+                avg_et = round(statistics.mean(r["et0"] for r in samples), 2)
+                daily_input["temperature_2m_max"].append(avg_tx)
+                daily_input["temperature_2m_min"].append(avg_tn)
+                daily_input["temperature_2m_mean"].append(avg_tm)
+                daily_input["precipitation_sum"].append(avg_pr)
+                daily_input["et0_fao_evapotranspiration"].append(avg_et)
+
+        series_2027 = compute_gdd_series(
+            daily_input,
+            t_base=1.2,
+            start_mmdd="02-07",
+            data_types=data_types,
+        )
+        daily_2027[sid] = series_2027
+
+        # 대표 시계열 자체가 산출하는 2027 개화일 확인
+        rep_open_iso = None
+        for r in series_2027:
+            if r["date"] >= f"{FORECAST_YEAR}-02-07":
+                eff_thr = max(
+                    80.0,
+                    thermal_base + WATER_BALANCE_COUPLING_K * (r["cumDeltaS"] - DEFAULT_BASELINE_DELTA_S),
+                )
+                if r["cumGdd"] >= eff_thr - 0.05:
+                    rep_open_iso = r["date"]
+                    break
+        if rep_open_iso is None:
+            rep_open_iso = f"{FORECAST_YEAR}-04-22"
+
+        s["forecast2027Meta"] = {
+            "ensembleMedianDate": f"{FORECAST_YEAR}-{median}",
+            "representativeSeriesDate": rep_open_iso,
+            "p25OpenDate": f"{FORECAST_YEAR}-{p25}",
+            "p75OpenDate": f"{FORECAST_YEAR}-{p75}",
+            "earliestOpenDate": f"{FORECAST_YEAR}-{earliest}",
+            "latestOpenDate": f"{FORECAST_YEAR}-{latest}",
+            "ensembleYears": n_ens,
+            "trendShiftC": base_trend_shift,
+            "warmingPerDecadeC": warming_per_decade,
+            "observedDays": obs_cnt,
+            "forecast16dDays": fc16_cnt,
+            "climatologyDays": clim_cnt,
+            "sourceMode": "live_hybrid" if (obs_cnt + fc16_cnt) > 0 else "climatology_ensemble",
+        }
+
+    return daily_2027
 
 
 def export_csv_files(
@@ -1024,16 +1283,41 @@ def export_csv_files(
 
 
 def main() -> None:
-    spring_2026 = fetch_spring_2026_all_stations()
-    seoul_analysis = fetch_seoul_longterm_history()
+    climatology_by_year = fetch_spring_climatology_2017_2026()
+    spring_2026 = {sid: years_map[2026] for sid, years_map in climatology_by_year.items()}
+
+    existing_json = DATA_DIR / "verified_data.json"
+    seoul_analysis = None
+    if existing_json.exists():
+        try:
+            cached = json.loads(existing_json.read_text(encoding="utf-8"))
+            cached_sa = cached.get("seoulAnalysis", {})
+            if len(cached_sa.get("marchTrend1973_2026", [])) >= 54:
+                print("Using cached complete 1973-2026 seoulAnalysis from verified_data.json")
+                seoul_analysis = cached_sa
+        except Exception:
+            seoul_analysis = None
+
+    if seoul_analysis is None:
+        seoul_analysis = fetch_seoul_longterm_history()
+
     osrm_matrix = fetch_osrm_matrix()
-    calibrated_stations = calibrate_stations(STATIONS, spring_2026)
+    calibrated_stations = calibrate_stations(STATIONS, climatology_by_year)
+    live_2027 = fetch_live_2027_window_if_in_season()
+    daily_2027 = build_2027_forecast_bundle(
+        calibrated_stations,
+        climatology_by_year,
+        seoul_analysis["warmingPerDecadeC"],
+        live_2027,
+    )
 
     payload = {
         "generatedAt": datetime.now(timezone.utc).isoformat(),
+        "defaultYear": FORECAST_YEAR,
+        "availableYears": [2026, FORECAST_YEAR],
         "sources": {
-            "weather": "Open-Meteo Historical Weather Archive API (ERA5/KMA grid, Tmax/Tmin/Tmean/Precipitation/FAO-ET0)",
-            "phenology": "기상청 생물계절관측 서울(108) 및 전국 ASOS 표준목 평년·실측 개화일",
+            "weather": "Open-Meteo Historical Archive (2017~2026 10개년 ASOS 실측 앙상블) + Open-Meteo Forecast API (2027 실측·16일 예보 하이브리드)",
+            "phenology": "기상청 생물계절관측 서울(108) 및 전국 ASOS 표준목 평년·실측 개화일(2023~2026 다년 캘리브레이션)",
             "routing": "OSRM Driving Table API + 국내선 항공·고속버스·코레일 KTX 공시 소요시간",
             "hydrology": "Shi et al. (2014) Prunus yedoensis GDD (T_base=1.2°C, 2/7 누적) & Viessman & Lewis (1996) 물수지식 P=ET+Q+ΔS",
             "flood": "WAMIS 국가수자원관리종합정보시스템 및 홍수통제소 특보 기준 수위",
@@ -1047,6 +1331,11 @@ def main() -> None:
         },
         "stations": calibrated_stations,
         "daily2026": spring_2026,
+        "daily2027": daily_2027,
+        "dailyByYear": {
+            "2026": spring_2026,
+            "2027": daily_2027,
+        },
         "seoulAnalysis": seoul_analysis,
         "routingMatrix": osrm_matrix,
     }

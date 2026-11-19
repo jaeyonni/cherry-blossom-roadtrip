@@ -22,13 +22,25 @@
     [38.05, 129.45],
   ];
 
-  const SLIDER_START_DATE = "2026-03-01";
   const SLIDER_DAYS_COUNT = 51;
 
   const STORAGE_KEYS = {
     WATCHLIST: "cherry_watchlist_v1",
     REPORTS: "cherry_reports_v1",
   };
+
+  function getDefaultYear() {
+    return Number(DATA.defaultYear || (DATA.dailyByYear?.["2027"] ? 2027 : 2026));
+  }
+
+  function getSliderStartDate() {
+    return `${state.activeYear}-03-01`;
+  }
+
+  function replaceIsoYear(isoDate, targetYear) {
+    if (!isoDate || isoDate.length < 10) return `${targetYear}-03-29`;
+    return `${targetYear}-${isoDate.slice(5)}`;
+  }
 
   function loadWatchlist() {
     try {
@@ -46,9 +58,12 @@
     return [];
   }
 
+  const initialYear = getDefaultYear();
+
   const state = {
     activeView: "map",
-    targetDate: "2026-03-29",
+    activeYear: initialYear,
+    targetDate: `${initialYear}-03-29`,
     selectedStationId: "155",
     watchlistIds: loadWatchlist(),
     reports: loadReports(),
@@ -143,17 +158,19 @@
   }
 
   function sliderIndexToDate(idx) {
-    return H.addDaysIso(SLIDER_START_DATE, Number(idx));
+    return H.addDaysIso(getSliderStartDate(), Number(idx));
   }
 
   function dateToSliderIndex(isoDate) {
-    const diff = H.diffDaysIso(SLIDER_START_DATE, isoDate);
+    const diff = H.diffDaysIso(getSliderStartDate(), isoDate);
     return Math.max(0, Math.min(SLIDER_DAYS_COUNT - 1, diff));
   }
 
   function getReportsCalibrationMap() {
     const map = {};
+    const prefix = `${state.activeYear}-`;
     for (const r of state.reports) {
+      if (r.date && !r.date.startsWith(prefix)) continue;
       if (!map[r.stationId]) {
         map[r.stationId] = { offsetDays: r.offsetDays || 0, count: 1 };
       } else {
@@ -169,6 +186,7 @@
 
   function recalculateEvaluations() {
     state.currentEvaluations = H.evaluateAllStations(DATA, state.targetDate, {
+      year: state.activeYear,
       tBase: 1.2,
       tempShift: 0,
       precipScalePct: 0,
@@ -391,10 +409,19 @@
     document.getElementById("alertDatePicker").value = state.targetDate;
     document.getElementById("dateSlider").value = String(dateToSliderIndex(state.targetDate));
     document.getElementById("sliderDateLabel").textContent = `${state.targetDate} (${H.formatKoreanDate(state.targetDate).slice(-2, -1)})`;
-    document.getElementById("mapSubDate").textContent = formatFullKoreanDate(state.targetDate);
+    const yearBadgeText = state.activeYear >= 2027 ? `${state.activeYear} 예측` : `${state.activeYear} 실측`;
+    document.getElementById("mapSubDate").textContent = `${formatFullKoreanDate(state.targetDate)} (${yearBadgeText})`;
     const originId = document.getElementById("tripOrigin")?.value || "108";
     const originName = DATA.stations.find((s) => s.id === originId)?.name || "서울";
     document.getElementById("mapSubOrigin").textContent = `${originName} 출발`;
+
+    document.querySelectorAll("#yearToggleBar .year-btn").forEach((btn) => {
+      btn.classList.toggle("active", Number(btn.dataset.year) === state.activeYear);
+    });
+    const tripYearBtn = document.getElementById("tripYearBadge");
+    if (tripYearBtn) {
+      tripYearBtn.textContent = `${yearBadgeText} 기준 ⇄`;
+    }
   }
 
   function renderStageGuideCard() {
@@ -478,11 +505,42 @@
         : `평년(${formatMonthDayKorean(ev.normalBloomDate)})보다 ${ev.daysVsNormal}일 늦게 개화합니다`;
     document.getElementById("selectedCityVsNormal").textContent = vsNormStr;
 
+    const metaBox = document.getElementById("selectedCityForecastMeta");
     const fest = st.festival;
-    document.getElementById("selectedCityFestival").innerHTML = `
-      <strong>🎪 지역 벚꽃축제:</strong> ${fest.name}<br/>
-      <span style="color:var(--text-muted);">${fest.start} ~ ${fest.end} · ${fest.location}</span>
-    `;
+    if (state.activeYear >= 2027 && ev.forecastMeta) {
+      const fm = ev.forecastMeta;
+      const diff26 = ev.daysVs2026;
+      const vs26Text =
+        diff26 === 0
+          ? "전년(2026) 실측과 동일"
+          : diff26 < 0
+          ? `전년(${formatMonthDayKorean(ev.obsBloom2026Date)}) 대비 ${Math.abs(diff26)}일 빠름`
+          : `전년(${formatMonthDayKorean(ev.obsBloom2026Date)}) 대비 ${diff26}일 늦음`;
+      const trendSign = fm.warmingPerDecadeC >= 0 ? "+" : "";
+      const basisBadge =
+        fm.sourceMode === "live_hybrid"
+          ? `실측 ${fm.observedDays}일 + 16일 수치예보 결합 (GDD · 물수지 ΔS)`
+          : `2023~2026 다년 보정 · 10년 기상 앙상블(GDD·물수지 ΔS) + 온난화(${trendSign}${fm.warmingPerDecadeC}°C/10년)`;
+
+      metaBox.style.display = "block";
+      metaBox.innerHTML = `
+        <div><strong>예측 변동 범위 (10년 앙상블 IQR):</strong> ${formatMonthDayKorean(fm.p25OpenDate)} ~ ${formatMonthDayKorean(fm.p75OpenDate)}</div>
+        <div><strong>전년(2026) 실측 비교:</strong> ${vs26Text}</div>
+        <span class="forecast-meta-badge">${basisBadge}</span>
+      `;
+
+      document.getElementById("selectedCityFestival").innerHTML = `
+        <strong>🎪 지역 벚꽃축제:</strong> ${fest.name}<br/>
+        <span style="color:var(--text-muted);">2027 일정 발표 전 (전년 ${H.formatShortMonthDay(fest.start)}~${H.formatShortMonthDay(fest.end)} 참고 · ${fest.location})</span>
+      `;
+    } else {
+      metaBox.style.display = "none";
+      metaBox.innerHTML = "";
+      document.getElementById("selectedCityFestival").innerHTML = `
+        <strong>🎪 지역 벚꽃축제:</strong> ${fest.name}<br/>
+        <span style="color:var(--text-muted);">${fest.start} ~ ${fest.end} · ${fest.location}</span>
+      `;
+    }
 
     const watchBtn = document.getElementById("btnWatchToggle");
     watchBtn.textContent = isWatched ? "★ 관심 지역 등록됨" : "🔔 관심 지역 등록";
@@ -519,7 +577,7 @@
       .map((day, idx) => {
         const circleClass = idx === 0 ? "day1" : idx === 1 ? "day2" : "";
         const festBadge = day.isFestivalActive
-          ? `<span class="stage-pill" style="background:var(--pink-tint); color:var(--pink-full); margin-top:6px;">🎪 ${day.festival.name}</span>`
+          ? `<span class="stage-pill" style="background:var(--pink-tint); color:var(--pink-full); margin-top:6px;">🎪 ${day.festival.name}${day.isFestivalEstimated ? " (예상 시기)" : ""}</span>`
           : `<div style="font-size:0.75rem; color:var(--text-muted); margin-top:5px;">추천 명소: ${day.toStation.spotName}</div>`;
 
         const autoChip = day.leg.autoReason
@@ -641,6 +699,7 @@
   function renderAlertsView() {
     const hazards = H.evaluateWeatherHazards(DATA, state.targetDate);
     const activeAlerts = hazards.filter((h) => h.activeAlert);
+    const hasLiveWeather = hazards.some((h) => h.isLiveWeather);
 
     document.getElementById("alertNavDot").classList.toggle("visible", activeAlerts.length > 0);
 
@@ -654,17 +713,21 @@
       const wamisRef = top.riverStatus
         ? ` · 인근 하천 ${top.riverStatus.river} ${top.riverStatus.name} 홍수주의보 기준 ${top.riverStatus.watchLevelM}m`
         : "";
+      const sourceNote =
+        top.dataType === "forecast16d"
+          ? "Open-Meteo 16일 수치예보 일강수량 기준"
+          : "Open-Meteo 실측 일강수량 데이터 기준";
       box.className = "hazard-box";
       box.innerHTML = `
         <div style="display:flex; justify-content:space-between; align-items:flex-start; gap:12px; flex-wrap:wrap;">
           <div style="flex:1;">
             <div style="font-size:0.96rem; font-weight:800; margin-bottom:5px;">
-              ⚠️ 실측 강수 집중 주의 · ${top.station.name} 외 ${Math.max(0, activeAlerts.length - 1)}곳
+              ⚠️ 실측·예보 강수 집중 주의 · ${top.station.name} 외 ${Math.max(0, activeAlerts.length - 1)}곳
             </div>
             <div style="font-size:0.83rem; line-height:1.5; margin-bottom:6px;">
-              ${formatFullKoreanDate(state.targetDate)} 실제 관측 강수량이 집중되었습니다: <strong>${regionListText}</strong>${wamisRef}. 여행 전 기상 확인 및 일정 조정을 고려하세요.
+              ${formatFullKoreanDate(state.targetDate)} 강수량이 집중되었습니다: <strong>${regionListText}</strong>${wamisRef}. 여행 전 기상 확인 및 일정 조정을 고려하세요.
             </div>
-            <div style="font-size:0.74rem; opacity:0.85;">Open-Meteo 실측 일강수량 데이터 기준</div>
+            <div style="font-size:0.74rem; opacity:0.85;">${sourceNote}</div>
           </div>
           <button type="button" class="btn-pink" id="btnRerouteSafe">
             강수 지역 피해서 일정 다시 짜기 →
@@ -673,12 +736,33 @@
       `;
 
       document.getElementById("btnRerouteSafe").addEventListener("click", () => {
+        const maxLimit = `${state.activeYear}-04-20`;
         document.getElementById("tripExcludeHazard").checked = true;
         document.getElementById("tripStartDate").value = state.targetDate;
         const endDateVal = H.addDaysIso(state.targetDate, 2);
-        document.getElementById("tripEndDate").value = endDateVal <= "2026-04-20" ? endDateVal : "2026-04-20";
+        document.getElementById("tripEndDate").value = endDateVal <= maxLimit ? endDateVal : maxLimit;
         switchView("trip");
         buildAndRenderTrip(true);
+      });
+    } else if (!hasLiveWeather) {
+      box.className = "hazard-box safe";
+      box.innerHTML = `
+        <div style="display:flex; justify-content:space-between; align-items:flex-start; gap:12px; flex-wrap:wrap;">
+          <div style="flex:1;">
+            <div style="font-size:0.93rem; font-weight:800; margin-bottom:5px;">📡 ${formatFullKoreanDate(state.targetDate)} · 2027 실시간 호우 특보 대기 중</div>
+            <div style="font-size:0.82rem; line-height:1.5;">
+              현재는 2027년 봄 도래 전으로 <strong>10년 기상 앙상블 + 온난화 추세</strong> 예측이 적용 중이며, 가짜 호우 경보는 표시하지 않습니다.<br/>
+              출발 16일 전부터 Open-Meteo 수치예보·실측 강수(일 30mm / 48h 40mm 이상)가 자동 감지됩니다.
+            </div>
+          </div>
+          <button type="button" class="btn-outline" id="btnTry2026Hazard">
+            2026 실측 호우 경보(4/4) 체험하기 →
+          </button>
+        </div>
+      `;
+      document.getElementById("btnTry2026Hazard").addEventListener("click", () => {
+        switchYear(2026, "2026-04-04");
+        showToast("2026년 4월 4일 실측 강수 집중 주의 상태로 전환했습니다.");
       });
     } else {
       const maxRain = Math.max(0, ...hazards.map((h) => h.rainTodayMm));
@@ -770,6 +854,57 @@
   }
 
   // ================= Live Open-Meteo Sync =================
+  function buildSeriesFromDailyArrays(year, rawRows, fallbackSeries = []) {
+    const startIso = `${year}-02-07`;
+    const fallbackByDate = Object.fromEntries(fallbackSeries.map((r) => [r.date, r]));
+    let cumGdd = 0,
+      cumP = 0,
+      cumEt = 0,
+      cumQ = 0,
+      cumDs = 0;
+
+    return rawRows.map((row) => {
+      const fb = fallbackByDate[row.date];
+      const tMax = row.tMax ?? fb?.tMax ?? 0;
+      const tMin = row.tMin ?? fb?.tMin ?? 0;
+      const tMeanHL = Number(((tMax + tMin) / 2).toFixed(2));
+      const tMean = Number((row.tMean ?? fb?.tMean ?? tMeanHL).toFixed(2));
+      const precip = Number((row.precip ?? fb?.precip ?? 0).toFixed(2));
+      const et0 = Number((row.et0 ?? fb?.et0 ?? 1.0).toFixed(2));
+      const q = precip > 5 ? Number(((precip - 5) * 0.28).toFixed(2)) : 0;
+      const deltaS = Number((precip - et0 - q).toFixed(2));
+
+      let dailyGdd = 0;
+      if (row.date >= startIso) {
+        dailyGdd = Math.max(0, tMeanHL - 1.2);
+        cumGdd = Number((cumGdd + dailyGdd).toFixed(2));
+        cumP = Number((cumP + precip).toFixed(2));
+        cumEt = Number((cumEt + et0).toFixed(2));
+        cumQ = Number((cumQ + q).toFixed(2));
+        cumDs = Number((cumDs + deltaS).toFixed(2));
+      }
+
+      return {
+        date: row.date,
+        dataType: row.dataType || (year <= 2026 ? "observed" : "climatology"),
+        tMax,
+        tMin,
+        tMean,
+        tMeanHL,
+        precip,
+        et0,
+        runoffQ: q,
+        deltaS,
+        dailyGdd: Number(dailyGdd.toFixed(2)),
+        cumGdd,
+        cumPrecip: cumP,
+        cumEt0: cumEt,
+        cumRunoffQ: cumQ,
+        cumDeltaS: cumDs,
+      };
+    });
+  }
+
   async function syncLiveOpenMeteo() {
     const btn = document.getElementById("btnLiveSync");
     btn.disabled = true;
@@ -778,66 +913,103 @@
     try {
       const lats = DATA.stations.map((s) => s.lat).join(",");
       const lons = DATA.stations.map((s) => s.lon).join(",");
-      const url =
-        `https://archive-api.open-meteo.com/v1/archive?latitude=${lats}&longitude=${lons}` +
-        "&start_date=2026-02-01&end_date=2026-04-25" +
-        "&daily=temperature_2m_max,temperature_2m_min,temperature_2m_mean,precipitation_sum,et0_fao_evapotranspiration" +
-        "&timezone=Asia%2FSeoul";
+      const yr = state.activeYear;
 
-      const resp = await fetch(url);
-      if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-      const json = await resp.json();
-      const items = Array.isArray(json) ? json : [json];
+      if (yr >= 2027) {
+        const url =
+          `https://api.open-meteo.com/v1/forecast?latitude=${lats}&longitude=${lons}` +
+          "&daily=temperature_2m_max,temperature_2m_min,temperature_2m_mean,precipitation_sum,et0_fao_evapotranspiration" +
+          "&past_days=60&forecast_days=16&timezone=Asia%2FSeoul";
+        const resp = await fetch(url);
+        if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+        const json = await resp.json();
+        const items = Array.isArray(json) ? json : [json];
 
-      DATA.stations.forEach((st, idx) => {
-        const daily = items[idx]?.daily;
-        if (!daily) return;
-        let cumGdd = 0,
-          cumP = 0,
-          cumEt = 0,
-          cumQ = 0,
-          cumDs = 0;
+        const winStart = `${yr}-02-01`;
+        const winEnd = `${yr}-04-25`;
+        const todayIso = new Date().toISOString().slice(0, 10);
+        let overlapCount = 0;
 
-        DATA.daily2026[st.id] = daily.time.map((dStr, i) => {
-          const tMax = daily.temperature_2m_max[i] ?? 0;
-          const tMin = daily.temperature_2m_min[i] ?? 0;
-          const tMeanHL = Number(((tMax + tMin) / 2).toFixed(2));
-          const tMean = Number((daily.temperature_2m_mean[i] ?? tMeanHL).toFixed(2));
-          const precip = Number((daily.precipitation_sum[i] ?? 0).toFixed(2));
-          const et0 = Number((daily.et0_fao_evapotranspiration[i] ?? 1.0).toFixed(2));
-          const q = precip > 5 ? Number(((precip - 5) * 0.28).toFixed(2)) : 0;
-          const deltaS = Number((precip - et0 - q).toFixed(2));
-          let dailyGdd = 0;
-          if (dStr >= "2026-02-07") {
-            dailyGdd = Math.max(0, tMeanHL - 1.2);
-            cumGdd = Number((cumGdd + dailyGdd).toFixed(2));
-            cumP = Number((cumP + precip).toFixed(2));
-            cumEt = Number((cumEt + et0).toFixed(2));
-            cumQ = Number((cumQ + q).toFixed(2));
-            cumDs = Number((cumDs + deltaS).toFixed(2));
+        DATA.stations.forEach((st, idx) => {
+          const daily = items[idx]?.daily;
+          const baseSeries = DATA.dailyByYear?.[String(yr)]?.[st.id] || DATA.daily2027?.[st.id] || [];
+          if (!daily || !baseSeries.length) return;
+
+          const liveByDate = {};
+          daily.time.forEach((dStr, i) => {
+            if (dStr >= winStart && dStr <= winEnd && daily.temperature_2m_max[i] != null) {
+              liveByDate[dStr] = {
+                date: dStr,
+                tMax: daily.temperature_2m_max[i],
+                tMin: daily.temperature_2m_min[i],
+                tMean: daily.temperature_2m_mean[i],
+                precip: daily.precipitation_sum[i],
+                et0: daily.et0_fao_evapotranspiration[i],
+                dataType: dStr < todayIso ? "observed" : "forecast16d",
+              };
+            }
+          });
+
+          const localOverlap = Object.keys(liveByDate).length;
+          if (localOverlap === 0) return;
+          overlapCount = Math.max(overlapCount, localOverlap);
+
+          const mergedRaw = baseSeries.map((r) => liveByDate[r.date] || r);
+          const rebuilt = buildSeriesFromDailyArrays(yr, mergedRaw, baseSeries);
+          if (!DATA.dailyByYear) DATA.dailyByYear = {};
+          if (!DATA.dailyByYear[String(yr)]) DATA.dailyByYear[String(yr)] = {};
+          DATA.dailyByYear[String(yr)][st.id] = rebuilt;
+          if (yr === 2027) DATA.daily2027[st.id] = rebuilt;
+
+          if (st.forecast2027Meta) {
+            st.forecast2027Meta.observedDays = rebuilt.filter((r) => r.dataType === "observed").length;
+            st.forecast2027Meta.forecast16dDays = rebuilt.filter((r) => r.dataType === "forecast16d").length;
+            st.forecast2027Meta.climatologyDays = rebuilt.filter((r) => r.dataType === "climatology").length;
+            st.forecast2027Meta.sourceMode = "live_hybrid";
           }
-          return {
-            date: dStr,
-            tMax,
-            tMin,
-            tMean,
-            tMeanHL,
-            precip,
-            et0,
-            runoffQ: q,
-            deltaS,
-            dailyGdd: Number(dailyGdd.toFixed(2)),
-            cumGdd,
-            cumPrecip: cumP,
-            cumEt0: cumEt,
-            cumRunoffQ: cumQ,
-            cumDeltaS: cumDs,
-          };
         });
-      });
 
-      refreshAllViews();
-      showToast("최신 기온·강수 데이터를 불러와 개화 예측을 갱신했습니다.");
+        if (overlapCount === 0) {
+          showToast(
+            `${yr}년 10년 기상 앙상블·온난화 추세 예측이 적용 중입니다. ${yr}년 1월 중순부터 16일 수치예보가 자동 결합됩니다.`
+          );
+          return;
+        }
+
+        refreshAllViews();
+        showToast(`${yr}년 최신 실측·16일 수치예보를 반영해 개화 예측을 갱신했습니다.`);
+      } else {
+        const url =
+          `https://archive-api.open-meteo.com/v1/archive?latitude=${lats}&longitude=${lons}` +
+          "&start_date=2026-02-01&end_date=2026-04-25" +
+          "&daily=temperature_2m_max,temperature_2m_min,temperature_2m_mean,precipitation_sum,et0_fao_evapotranspiration" +
+          "&timezone=Asia%2FSeoul";
+
+        const resp = await fetch(url);
+        if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+        const json = await resp.json();
+        const items = Array.isArray(json) ? json : [json];
+
+        DATA.stations.forEach((st, idx) => {
+          const daily = items[idx]?.daily;
+          if (!daily) return;
+          const rawRows = daily.time.map((dStr, i) => ({
+            date: dStr,
+            tMax: daily.temperature_2m_max[i],
+            tMin: daily.temperature_2m_min[i],
+            tMean: daily.temperature_2m_mean[i],
+            precip: daily.precipitation_sum[i],
+            et0: daily.et0_fao_evapotranspiration[i],
+            dataType: "observed",
+          }));
+          const rebuilt = buildSeriesFromDailyArrays(2026, rawRows, DATA.daily2026[st.id] || []);
+          DATA.daily2026[st.id] = rebuilt;
+          if (DATA.dailyByYear) DATA.dailyByYear["2026"][st.id] = rebuilt;
+        });
+
+        refreshAllViews();
+        showToast("2026년 실측 기온·강수 데이터를 다시 불러와 개화 계산을 갱신했습니다.");
+      }
     } catch (_) {
       showToast("일시적인 통신 오류로 내장 검증 데이터를 유지합니다.");
     } finally {
@@ -876,6 +1048,43 @@
     }
   }
 
+  function syncDateInputBounds(inputEl, minIso, maxIso, targetVal) {
+    if (!inputEl) return;
+    inputEl.min = "";
+    inputEl.max = "";
+    const clamped = targetVal < minIso ? minIso : targetVal > maxIso ? maxIso : targetVal;
+    inputEl.value = clamped;
+    inputEl.min = minIso;
+    inputEl.max = maxIso;
+  }
+
+  function switchYear(newYear, optionalTargetDate = null) {
+    const y = Number(newYear);
+    if (state.isAnimatingNorth) {
+      toggleNorthAnimation();
+    }
+    state.activeYear = y;
+    const desiredTarget = optionalTargetDate || replaceIsoYear(state.targetDate, y);
+    const minDate = `${y}-03-01`;
+    const maxDate = `${y}-04-20`;
+    state.targetDate = desiredTarget < minDate ? minDate : desiredTarget > maxDate ? maxDate : desiredTarget;
+
+    syncDateInputBounds(document.getElementById("datePickerInput"), minDate, maxDate, state.targetDate);
+    syncDateInputBounds(document.getElementById("alertDatePicker"), minDate, maxDate, state.targetDate);
+
+    const reportEl = document.getElementById("reportDate");
+    syncDateInputBounds(reportEl, minDate, maxDate, replaceIsoYear(reportEl?.value, y));
+
+    const tripMin = `${y}-03-15`;
+    const tripMax = `${y}-04-20`;
+    const startEl = document.getElementById("tripStartDate");
+    const endEl = document.getElementById("tripEndDate");
+    syncDateInputBounds(startEl, tripMin, tripMax, replaceIsoYear(startEl?.value || `${y}-04-03`, y));
+    syncDateInputBounds(endEl, tripMin, tripMax, replaceIsoYear(endEl?.value || `${y}-04-05`, y));
+
+    refreshAllViews();
+  }
+
   function toggleNorthAnimation() {
     const btn = document.getElementById("btnAnimateNorth");
     if (state.isAnimatingNorth) {
@@ -885,14 +1094,16 @@
       return;
     }
 
+    const animStart = `${state.activeYear}-03-18`;
+    const animEnd = `${state.activeYear}-04-15`;
     state.isAnimatingNorth = true;
     btn.textContent = "⏸ 정지";
-    let stepDate = "2026-03-18";
+    let stepDate = animStart;
     setTargetDate(stepDate);
 
     state.animTimer = setInterval(() => {
       stepDate = H.addDaysIso(stepDate, 1);
-      if (stepDate > "2026-04-15") stepDate = "2026-03-18";
+      if (stepDate > animEnd) stepDate = animStart;
       setTargetDate(stepDate);
     }, 350);
   }
@@ -911,6 +1122,30 @@
   function bindEvents() {
     document.querySelectorAll(".web-nav-btn").forEach((btn) => {
       btn.addEventListener("click", () => switchView(btn.dataset.view));
+    });
+
+    document.querySelectorAll("#yearToggleBar .year-btn").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        const yr = Number(btn.dataset.year);
+        if (yr !== state.activeYear) {
+          switchYear(yr);
+          showToast(
+            yr >= 2027
+              ? "2027년 개화 예측 모드로 전환했습니다."
+              : "2026년 기상청 실측 검증 모드로 전환했습니다."
+          );
+        }
+      });
+    });
+
+    document.getElementById("tripYearBadge")?.addEventListener("click", () => {
+      const nextYr = state.activeYear >= 2027 ? 2026 : 2027;
+      switchYear(nextYr);
+      showToast(
+        nextYr >= 2027
+          ? "2027년 예측 기준으로 로드트립 일정을 재계산했습니다."
+          : "2026년 실측 기준으로 로드트립 일정을 재계산했습니다."
+      );
     });
 
     document.getElementById("datePickerInput").addEventListener("change", (e) => {
@@ -1024,7 +1259,7 @@
     populateSelects();
     initMaps();
     bindEvents();
-    refreshAllViews();
+    switchYear(state.activeYear, state.targetDate);
 
     const initialHash = window.location.hash.replace("#", "");
     if (["map", "trip", "alert"].includes(initialHash) && initialHash !== "map") {

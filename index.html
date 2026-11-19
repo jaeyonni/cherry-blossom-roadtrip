@@ -57,9 +57,15 @@
             <div style="display:flex; justify-content:space-between; align-items:flex-start; gap:10px; flex-wrap:wrap;">
               <div>
                 <h2 class="card-title">벚꽃 개화 지도</h2>
-                <p class="card-sub"><span id="mapSubOrigin">서울 출발</span> · <span id="mapSubDate">2026년 3월 29일</span> 기준</p>
+                <p class="card-sub"><span id="mapSubOrigin">서울 출발</span> · <span id="mapSubDate">2027년 3월 29일 (2027 예측)</span> 기준</p>
               </div>
-              <button type="button" class="btn-outline" id="btnAnimateNorth">▶ 매주 북상 보기</button>
+              <div class="map-header-actions">
+                <div class="year-toggle" id="yearToggleBar" role="tablist" aria-label="기준 연도 선택">
+                  <button type="button" class="year-btn" data-year="2026">2026 실측</button>
+                  <button type="button" class="year-btn active" data-year="2027">2027 예측</button>
+                </div>
+                <button type="button" class="btn-outline" id="btnAnimateNorth">▶ 매주 북상 보기</button>
+              </div>
             </div>
 
             <div class="map-search-bar">
@@ -73,9 +79,9 @@
                 type="date"
                 id="datePickerInput"
                 class="date-chip"
-                value="2026-03-29"
-                min="2026-03-01"
-                max="2026-04-20"
+                value="2027-03-29"
+                min="2027-03-01"
+                max="2027-04-20"
               />
             </div>
 
@@ -83,7 +89,7 @@
               <div class="slider-top-row">
                 <span>개화 전선 날짜 이동</span>
                 <div style="display:flex; align-items:center; gap:8px;">
-                  <strong id="sliderDateLabel" style="color:var(--pink-full);">2026-03-29 (일)</strong>
+                  <strong id="sliderDateLabel" style="color:var(--pink-full);">2027-03-29 (월)</strong>
                   <button type="button" class="btn-outline" id="btnFitKorea" style="padding:4px 9px; font-size:0.74rem;">전국 보기</button>
                 </div>
               </div>
@@ -185,6 +191,8 @@
                 평년 대비 계산 중...
               </div>
 
+              <div id="selectedCityForecastMeta" class="forecast-meta-box" style="display:none;"></div>
+
               <div
                 id="selectedCityFestival"
                 style="padding:11px 13px; border-radius:12px; background:var(--pink-tint); color:var(--green-deep); font-size:0.82rem; margin-bottom:14px;"
@@ -204,7 +212,17 @@
         <div class="grid-trip">
           <div class="side-stack">
             <div class="card">
-              <h2 class="card-title">로드트립 경로 자동 추천</h2>
+              <div style="display:flex; justify-content:space-between; align-items:center; gap:8px; flex-wrap:wrap;">
+                <h2 class="card-title">로드트립 경로 자동 추천</h2>
+                <button
+                  type="button"
+                  id="tripYearBadge"
+                  class="trip-year-pill"
+                  title="클릭하여 2027 예측 / 2026 실측 전환"
+                >
+                  2027 예측 기준 ⇄
+                </button>
+              </div>
               <p class="card-sub" style="margin-bottom:14px;">날짜만 입력하면 개화 중인 지역을 골라 남→북 동선을 짜드립니다</p>
 
               <div class="form-grid-2">
@@ -226,11 +244,11 @@
               <div class="form-grid-2">
                 <div class="field-group">
                   <label for="tripStartDate">출발 날짜</label>
-                  <input type="date" id="tripStartDate" class="field-ctrl" value="2026-04-03" min="2026-03-15" max="2026-04-18" />
+                  <input type="date" id="tripStartDate" class="field-ctrl" value="2027-04-03" min="2027-03-15" max="2027-04-20" />
                 </div>
                 <div class="field-group">
                   <label for="tripEndDate">도착 날짜</label>
-                  <input type="date" id="tripEndDate" class="field-ctrl" value="2026-04-05" min="2026-03-15" max="2026-04-20" />
+                  <input type="date" id="tripEndDate" class="field-ctrl" value="2027-04-05" min="2027-03-15" max="2027-04-20" />
                 </div>
               </div>
 
@@ -293,9 +311,9 @@
                   type="date"
                   id="alertDatePicker"
                   class="date-chip"
-                  value="2026-03-29"
-                  min="2026-03-01"
-                  max="2026-04-20"
+                  value="2027-03-29"
+                  min="2027-03-01"
+                  max="2027-04-20"
                 />
               </div>
             </div>
@@ -325,7 +343,7 @@
                   </div>
                   <div class="field-group">
                     <label for="reportDate">촬영 날짜</label>
-                    <input type="date" id="reportDate" class="field-ctrl" value="2026-03-29" min="2026-03-01" max="2026-04-20" />
+                    <input type="date" id="reportDate" class="field-ctrl" value="2027-03-29" min="2027-03-01" max="2027-04-20" />
                   </div>
                 </div>
 

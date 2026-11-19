@@ -28,7 +28,7 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add data/verified_data.js data/verified_data.json data/2016-2026_서울_개화일.csv data/전국_ASOS_기온자료.csv
+          git add data/verified_data.js data/verified_data.json data/climatology_2017_2026.json data/2016-2026_서울_개화일.csv data/전국_ASOS_기온자료.csv
           if git diff --staged --quiet; then
             echo "No changes to commit."
           else

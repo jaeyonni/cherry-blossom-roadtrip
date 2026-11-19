@@ -265,6 +265,85 @@ select {
   align-items: start;
 }
 
+.map-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.year-toggle {
+  display: inline-flex;
+  background: var(--bg-soft);
+  padding: 3px;
+  border-radius: 999px;
+  gap: 2px;
+  border: 1px solid var(--border-soft);
+}
+
+.year-btn {
+  border: none;
+  background: transparent;
+  color: var(--text-muted);
+  padding: 5px 11px;
+  border-radius: 999px;
+  font-size: 0.77rem;
+  font-weight: 700;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: all 0.15s ease;
+}
+
+.year-btn:hover {
+  color: var(--green-deep);
+}
+
+.year-btn.active {
+  background: var(--green-deep);
+  color: #fff;
+  box-shadow: 0 1px 5px rgba(29, 53, 43, 0.2);
+}
+
+.forecast-meta-box {
+  padding: 10px 12px;
+  border-radius: 12px;
+  background: var(--bg-ivory);
+  border: 1px solid var(--border-soft);
+  font-size: 0.78rem;
+  color: var(--text-main);
+  margin-bottom: 12px;
+  line-height: 1.55;
+}
+
+.forecast-meta-badge {
+  display: inline-block;
+  margin-top: 5px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: var(--green-tint);
+  color: var(--green-deep);
+  font-size: 0.71rem;
+  font-weight: 700;
+}
+
+.trip-year-pill {
+  border: 1px solid rgba(184, 93, 121, 0.28);
+  background: var(--pink-tint);
+  color: var(--pink-full);
+  border-radius: 999px;
+  padding: 4px 10px;
+  font-size: 0.74rem;
+  font-weight: 700;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: all 0.15s ease;
+}
+
+.trip-year-pill:hover {
+  background: var(--pink-full);
+  color: #fff;
+}
+
 .map-search-bar {
   display: flex;
   flex-wrap: wrap;
